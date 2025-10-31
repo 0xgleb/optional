@@ -212,8 +212,32 @@ Steps:
 
 ##### Finalization
 
-- Anyone can trigger settlement processing for expired options
-- Contract executes all pending settlements based on recorded exercise intents
+Settlement processing can be triggered by anyone after expiry:
+
+**Triggering mechanism:**
+- Call `finalizeExpiry(tokenId)` or `finalizeExpiry(tokenId, holderAddress)` after expiry
+- Contract executes settlements based on recorded exercise intents
+- Can process individual holder or batch multiple holders in one tx
+
+**Settlement Incentive Mechanism:**
+
+PoC has no explicit incentive for third-party settlement finalization:
+- Holders incentivized to finalize their own profitable exercises
+- Writers incentivized to reclaim collateral for non-exercised options
+- Gas cost: ~$0.03-0.05 per settlement on Arbitrum (acceptable for self-service)
+- Anyone can call finalization functions permissionlessly
+
+Future enhancement (if time permits): Small bounty mechanism
+- Charge 0.1% settlement fee from collateral
+- Pay to whoever triggers finalization
+- Enables profitable third-party settlement bots
+- Creates decentralized keeper network
+
+**Settlement execution:**
+- Since funds are locked when exercise is signaled, settlement is deterministic
+- Simply swap locked holder funds with writer's collateral
+- Burns option tokens from holder
+- Atomic settlement guarantees
 
 Outcome: Tokens exchanged per exercise intent, or collateral returned
 
@@ -242,7 +266,7 @@ sequenceDiagram
     participant OptionsToken
     
     Writer->>UnderlyingERC20: approve(OptionsToken, collateral)
-    Writer->>OptionsToken: writeOption(underlying, quote, strike, expiry, CALL, qty)
+    Writer->>OptionsToken: writeOption(underlying, quote, strike, expiry, CALL, quantity)
     OptionsToken->>UnderlyingERC20: transferFrom(Writer, OptionsToken, collateral)
     OptionsToken->>OptionsToken: mint ERC-1155 tokens to Writer
     OptionsToken->>OptionsToken: record position (Writer, collateral_locked)
@@ -257,7 +281,7 @@ sequenceDiagram
     participant OptionsToken
     
     Writer->>QuoteERC20: approve(OptionsToken, strike_collateral)
-    Writer->>OptionsToken: writeOption(underlying, quote, strike, expiry, PUT, qty)
+    Writer->>OptionsToken: writeOption(underlying, quote, strike, expiry, PUT, quantity)
     OptionsToken->>QuoteERC20: transferFrom(Writer, OptionsToken, strike_collateral)
     OptionsToken->>OptionsToken: mint ERC-1155 tokens to Writer
     OptionsToken->>OptionsToken: record position (Writer, collateral_locked)
@@ -274,12 +298,12 @@ sequenceDiagram
     participant Buyer
     
     Seller->>OptionsToken: setApprovalForAll(CLOB, true)
-    Seller->>CLOB: placeOrder(tokenId, price, qty, SELL)
+    Seller->>CLOB: placeOrder(tokenId, price, quantity, SELL)
     CLOB->>CLOB: Add order to book
-    
+
     Buyer->>QuoteERC20: approve(CLOB, premium)
-    Buyer->>CLOB: marketOrder(tokenId, qty, BUY)
-    CLOB->>OptionsToken: safeTransferFrom(Seller, Buyer, tokenId, qty)
+    Buyer->>CLOB: marketOrder(tokenId, quantity, BUY)
+    CLOB->>OptionsToken: safeTransferFrom(Seller, Buyer, tokenId, quantity)
     CLOB->>QuoteERC20: transferFrom(Buyer, Seller, premium)
 ```
 
@@ -293,16 +317,17 @@ sequenceDiagram
     participant UnderlyingERC20
     participant Writer
     
-    Note over Holder,OptionsToken: Before Expiry
-    Holder->>OptionsToken: signalExercise(tokenId, qty)
-    OptionsToken->>OptionsToken: Record exercise intent
-    
-    Note over OptionsToken: At Expiry
+    Note over Holder,OptionsToken: Before Expiry - Signal Exercise
     Holder->>QuoteERC20: approve(OptionsToken, strike_payment)
+    Holder->>OptionsToken: signalExercise(tokenId, quantity)
+    OptionsToken->>QuoteERC20: transferFrom(Holder, OptionsToken, strike_payment)
+    OptionsToken->>OptionsToken: Lock strike payment, record exercise intent
+
+    Note over OptionsToken: At Expiry - Finalize Settlement
     Holder->>OptionsToken: finalizeExpiry(tokenId)
-    
-    Note over OptionsToken: Execute Call Exercise
-    OptionsToken->>QuoteERC20: transferFrom(Holder, Writer, strike_payment)
+
+    Note over OptionsToken: Execute Call Exercise (swap locked funds)
+    OptionsToken->>QuoteERC20: transfer(Writer, strike_payment)
     OptionsToken->>UnderlyingERC20: transfer(Holder, underlying)
     OptionsToken->>OptionsToken: burn Holder's ERC-1155 tokens
 ```
@@ -317,15 +342,17 @@ sequenceDiagram
     participant QuoteERC20
     participant Writer
     
-    Note over Holder,OptionsToken: Before Expiry
-    Holder->>OptionsToken: signalExercise(tokenId, qty)
-    
-    Note over OptionsToken: At Expiry
+    Note over Holder,OptionsToken: Before Expiry - Signal Exercise
     Holder->>UnderlyingERC20: approve(OptionsToken, underlying_amount)
+    Holder->>OptionsToken: signalExercise(tokenId, quantity)
+    OptionsToken->>UnderlyingERC20: transferFrom(Holder, OptionsToken, underlying_amount)
+    OptionsToken->>OptionsToken: Lock underlying, record exercise intent
+
+    Note over OptionsToken: At Expiry - Finalize Settlement
     Holder->>OptionsToken: finalizeExpiry(tokenId)
-    
-    Note over OptionsToken: Execute Put Exercise
-    OptionsToken->>UnderlyingERC20: transferFrom(Holder, Writer, underlying)
+
+    Note over OptionsToken: Execute Put Exercise (swap locked funds)
+    OptionsToken->>UnderlyingERC20: transfer(Writer, underlying)
     OptionsToken->>QuoteERC20: transfer(Holder, strike_payment)
     OptionsToken->>OptionsToken: burn Holder's ERC-1155 tokens
 ```
@@ -377,6 +404,18 @@ All contracts in Rust/WASM using Arbitrum Stylus SDK.
 - Modular: upgrade CLOB without affecting options
 - Clear security boundaries
 
+### Stylus Contract Maintenance
+
+**CRITICAL: Yearly Reactivation Requirement**
+
+Stylus smart contracts must be reactivated every 365 days or after any Stylus/ArbOS upgrade to remain callable. This applies to both OptionsToken and CLOB contracts.
+
+Reactivation process:
+- Can be performed by anyone using `cargo-stylus` or the ArbWasm precompile
+- Necessary because WASM is lowered to native machine code during activation
+- Contracts become non-callable if not reactivated (collateral remains safe but locked)
+- Recommend automated monitoring and reactivation infrastructure
+
 ### OptionsToken Contract
 
 Responsibilities:
@@ -388,7 +427,7 @@ Responsibilities:
 - Execute settlements at expiry (exercise or return collateral)
 - Burn tokens on exercise
 
-Interface (draft, TBC)
+Storage Structure (draft, TBC)
 
 ```rust
 sol_storage! {
@@ -431,7 +470,7 @@ sol_storage! {
 }
 ```
 
-Token ID is `keccak256` hash of 
+Token ID is `keccak256` hash of
 
 - Address of the underlying ERC20 token
 - Address of the quote ERC20 token
