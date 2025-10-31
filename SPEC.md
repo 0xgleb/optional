@@ -53,8 +53,8 @@ This specification outlines a fully on-chain Central Limit Order Book (CLOB) for
 
 **Physical Settlement**: Actual token delivery on exercise
 
-- Call exercise: Holder pays strike in quote token → receives underlying token
-- Put exercise: Holder delivers underlying token → receives strike in quote token
+- Call exercise: Holder pays strike in quote token -> receives underlying token
+- Put exercise: Holder delivers underlying token -> receives strike in quote token
 - No oracle required (holder decides if exercise is profitable)
 
 ## User Flows
@@ -74,7 +74,7 @@ Steps:
 Collateral:
 
 - Calls: Underlying ERC20 tokens (1:1 ratio)
-- Puts: Quote ERC20 tokens (strike × quantity)
+- Puts: Quote ERC20 tokens (strike * quantity)
 
 Outcome: Option tokens (ERC-1155) minted, collateral (ERC20) locked
 
@@ -89,7 +89,7 @@ Steps:
 1. Maker places a limit order
 2. Maker's tokens locked:
   - Selling: ERC-1155 option tokens locked
-  - Buying: Quote ERC20 locked (price × quantity)
+  - Buying: Quote ERC20 locked (price * quantity)
 3. Order added to orderbook at specified price level
 4. Order waits for taker
 
@@ -136,6 +136,45 @@ Steps:
 2. Contract records holder's exercise intent
 3. Holder can change intent by canceling exercise signal before expiry
 4. At expiry, contract processes all recorded exercise intents
+
+**Constraints and Edge Cases:**
+
+- **Funds must be locked when signaling:**
+  - Signaling exercise LOCKS the required funds immediately to prevent writer griefing
+  - For **calls**: Holder's quote tokens (strike payment) locked in contract
+  - For **puts**: Holder's underlying tokens locked in contract
+  - Cannot signal without sufficient balance and approval
+  - Prevents holder from blocking writer's collateral without committing funds
+
+- **Partial quantities:** Holder can signal exercise for any quantity <= their balance
+  - Example: Own 10 options, signal exercise for 7.5, keep 2.5 unexercised
+  - Intent tracking: `exercise_intents[(holder, tokenId)] = quantity`
+  - Locked funds: `locked_exercise_funds[(holder, tokenId, token)] = amount`
+
+- **Transfer restrictions after signaling:**
+  - Option tokens with exercise intent signaled become NON-TRANSFERABLE
+  - ERC-1155 transfer blocked for signaled quantity
+  - Holder must cancel exercise intent first to regain transferability
+  - Remaining unsignaled tokens stay fully transferable
+  - Prevents split between token ownership and exercise rights/locked funds
+
+- **Signal deadline:**
+  - Can signal any time before expiry block timestamp
+  - Signals in same block as expiry are valid
+  - No minimum advance notice required
+
+- **Cancellation:**
+  - Call `cancelExerciseIntent(tokenId, quantity)` before expiry
+  - Returns locked funds to holder
+  - Clears exercise intent
+  - No penalty for cancellation
+  - Cannot cancel after expiry
+
+- **At expiry:**
+  - All signaled exercises execute atomically
+  - Locked funds from holder swap with writer's collateral
+  - No approval checks needed (funds already locked)
+  - No failure cases (deterministic settlement)
 
 Outcome: Exercise intent recorded, reversible until expiry
 
