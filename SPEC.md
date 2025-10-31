@@ -29,8 +29,6 @@ This specification outlines a fully on-chain Central Limit Order Book (CLOB) for
 - **Gas Efficient**: All contracts in Rust/Stylus for maximum performance
 - **Permissionless**: Any ERC20 token pair can have options created
 
-## Background
-
 ### Definitions
 
 **Call Option**: Right (not obligation) to BUY the underlying ERC20 token at strike price
@@ -59,7 +57,7 @@ This specification outlines a fully on-chain Central Limit Order Book (CLOB) for
 - Put exercise: Holder delivers underlying token → receives strike in quote token
 - No oracle required (holder decides if exercise is profitable)
 
-### User Flows
+## User Flows
 
 #### Flow 1: Writing (Selling) an Option
 
@@ -101,14 +99,122 @@ Outcome: Limit order in orderbook
 
 Steps:
 
-1. Taker calls marketOrder(tokenId, quantity, side) (no price specified)
+1. Taker places a market order
 2. Matching engine fills against best available prices:
   - Buying: Matches ascending from best ask
   - Selling: Matches descending from best bid
 3. If insufficient liquidity for full quantity -> REVERT
 4. If sufficient liquidity:
-  - ERC-1155 option tokens transfer: Seller → Buyer
-  - Quote ERC20 premium transfer: Buyer → Seller (at makers' prices)
+  - ERC-1155 option tokens transfer: Seller -> Buyer
+  - Quote ERC20 premium transfer: Buyer -> Seller (at makers' prices)
   - Maker orders filled/reduced (FIFO at each price)
 
 Outcome: Taker receives full fill at makers' prices, or transaction reverts
+
+#### Flow 3: Cancelling Orders
+
+Actors: Maker
+
+Steps:
+
+1. Maker requests to cancel their order
+2. Contract verifies order ownership
+3. Order removed from orderbook
+4. Locked tokens returned to maker:
+  - Sell orders: ERC-1155 option tokens unlocked
+  - Buy orders: Quote ERC20 unlocked
+
+Outcome: Order deleted, locked tokens returned
+
+#### Flow 4: Exercise Intent (Before Expiry)
+
+Actors: Option Holder
+
+Steps:
+
+1. Holder signals intent to exercise specific option tokens any time before expiry
+2. Contract records holder's exercise intent
+3. Holder can change intent by canceling exercise signal before expiry
+4. At expiry, contract processes all recorded exercise intents
+
+Outcome: Exercise intent recorded, reversible until expiry
+
+#### Flow 5: Settlement at Expiry
+
+Actors: Option Holder, Option Writer, Anyone (for finalization)
+
+Automatic Processing at Expiry
+
+- All options with exercise intent: execute automatically
+- All options without exercise intent: collateral unlocked for writer
+
+##### Call Exercise (automatic if signaled)
+
+Steps:
+
+1. Contract transfers quote ERC20 (strike amount): Holder to Writer
+2. Contract transfers underlying ERC20: Locked collateral to Holder
+3. ERC-1155 option tokens burned from holder
+
+##### Put Exercise (automatic if signaled)
+
+Steps:
+
+1. Contract transfers underlying ERC20: Holder to Writer
+2. Contract transfers quote ERC20 (strike amount): Locked collateral to Holder
+3. ERC-1155 option tokens burned from holder
+
+##### Non-Exercise (automatic if not signaled)
+
+Steps:
+
+1. Contract returns full collateral ERC20 to writer
+2. ERC-1155 option tokens burned from holder
+
+##### Finalization
+
+- Anyone can trigger settlement processing for expired options
+- Contract executes all pending settlements based on recorded exercise intents
+
+Outcome: Tokens exchanged per exercise intent, or collateral returned
+
+### Option Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Written: writeOption()
+    Written --> Trading: placeOrder()
+    Trading --> Trading: trades execute
+    Trading --> ExerciseSignaled: signalExercise()
+    Trading --> NoExerciseIntent: expiry reached
+    ExerciseSignaled --> Trading: cancelExercise()
+    ExerciseSignaled --> Exercised: expiry + finalize
+    NoExerciseIntent --> Settled: finalize
+    Exercised --> [*]
+    Settled --> [*]
+```
+
+### Contract execution flow
+
+```mermaid
+sequenceDiagram
+    participant Writer
+    participant Contract
+    participant Buyer
+    
+    Writer->>Contract: writeOption(params)
+    Contract->>Writer: Transfer ERC20 collateral
+    Contract->>Writer: Mint ERC-1155 tokens
+    
+    Writer->>Contract: placeOrder(sell)
+    Buyer->>Contract: placeOrder(buy, crosses)
+    Contract->>Contract: Match orders
+    Contract->>Buyer: Transfer ERC-1155 tokens
+    Contract->>Writer: Transfer ERC20 premium
+    
+    Buyer->>Contract: signalExercise()
+    Note over Contract: At expiry
+    Contract->>Contract: finalizeExpiry()
+    Contract->>Buyer: Transfer ERC20 underlying
+    Contract->>Writer: Transfer ERC20 strike payment
+```
