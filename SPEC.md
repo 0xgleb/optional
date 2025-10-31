@@ -64,12 +64,51 @@ This specification outlines a fully on-chain Central Limit Order Book (CLOB) for
 #### Flow 1: Writing (Selling) an Option
 
 Actors: Option Writer
+Steps:
+
+1. Writer selects option parameters (underlying ERC20, quote ERC20, strike, expiry, type, quantity)
+2. Contract calculates required collateral based on option type
+3. Writer approves ERC20 token transfer to contract
+4. Contract transfers collateral from writer
+5. Contract mints ERC-1155 option tokens to writer
+6. Writer can now sell these tokens via CLOB or elsewhere or hold them
+
+Collateral:
+
+- Calls: Underlying ERC20 tokens (1:1 ratio)
+- Puts: Quote ERC20 tokens (strike × quantity)
+
+Outcome: Option tokens (ERC-1155) minted, collateral (ERC20) locked
+
+#### Flow 2: Trading Options
+
+Actors: Maker, Taker
+
+##### Adding Liquidity (Maker)
 
 Steps:
 
-- Writer chooses option parameters (underlying token, quote token, strike, expiry, type, quantity)
-- Contract calculates required collateral based on option type
-- Writer approves ERC20 token transfer to contract
-- Contract transfers collateral from writer
-- Contract mints ERC-1155 option tokens to writer
-- Writer can now sell these tokens via CLOB or hold them
+1. Maker places a limit order
+2. Maker's tokens locked:
+  - Selling: ERC-1155 option tokens locked
+  - Buying: Quote ERC20 locked (price × quantity)
+3. Order added to orderbook at specified price level
+4. Order waits for taker
+
+Outcome: Limit order in orderbook
+
+##### Taking Liquidity (Taker)
+
+Steps:
+
+1. Taker calls marketOrder(tokenId, quantity, side) (no price specified)
+2. Matching engine fills against best available prices:
+  - Buying: Matches ascending from best ask
+  - Selling: Matches descending from best bid
+3. If insufficient liquidity for full quantity -> REVERT
+4. If sufficient liquidity:
+  - ERC-1155 option tokens transfer: Seller → Buyer
+  - Quote ERC20 premium transfer: Buyer → Seller (at makers' prices)
+  - Maker orders filled/reduced (FIFO at each price)
+
+Outcome: Taker receives full fill at makers' prices, or transaction reverts
