@@ -803,10 +803,14 @@ Requirements: Subgraph indexing, frontend improvements
 
 ### DeFi Options Research
 
-- Opyn Gamma Protocol: Physical settlement, separate ERC20 per series
-- Lyra V1: ERC-1155 implementation patterns
+- Opyn v1: American options, physical settlement, separate ERC20 per series
+- Opyn Gamma (v2): European options, **cash settlement**, ERC20 tokens, oracle-based
+- Premia Finance: **ERC-1155 options**, covered call/put with locked collateral, composable across DEXs
+- Lyra V1: ERC-1155 implementation, AMM-based pricing
 - Premia V3: Per-market isolation
 - Hegic: Peer-to-pool liquidity (contrasting approach)
+
+Note: Premia Finance is the most relevant reference for our ERC-1155 + physical settlement design. Opyn Gamma moved to cash settlement to enable spreads and margin efficiencies.
 
 ### Orderbook Design
 
