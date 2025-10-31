@@ -492,7 +492,7 @@ All amounts are normalized to 18 decimals for internal calculations and token ID
 
 For a token with $d$ decimals, normalize amount $a$ to 18 decimals:
 
-$$\text{normalized\_amount} = a \times 10^{(18 - d)}$$
+$$\text{normalized amount} = a \times 10^{(18 - d)}$$
 
 **Example: 1 WBTC (8 decimals) call at 60,000 USDC (6 decimals) strike**
 
@@ -535,7 +535,7 @@ Certain ERC20 token types are incompatible with the options protocol and must be
 
 **Arithmetic Overflow/Underflow:**
 - Extreme decimal values or amounts could cause overflow in normalization math
-- **Problem:** Normalizing very large amounts or tokens with many decimals: $a \times 10^{(18-d)}$ might exceed uint256
+- **Problem:** Normalizing very large amounts or tokens with many decimals: $a \times 10^{(18-d)}$ might exceed `uint256`
 - **Protection:** Use checked arithmetic (Rust's `checked_mul`, `checked_pow`) - reverts automatically on overflow/underflow
 
 **PoC Approach:** Fully permissionless - any ERC20 pair can be used, any decimal count supported. Contract protects against fee-on-transfer (detectable) and arithmetic overflow (checked math). For rebasing tokens and blacklist tokens, users assume full risk. Buyer beware.
@@ -657,14 +657,14 @@ sol_storage! {
 
 ## Gas Optimization Targets (Arbitrum)
 
-Estimated costs at 0.1 gwei gas price, 0.05 USD per transaction average:
+Estimated costs at 0.1 gwei gas price, $0.05 per transaction average:
 
-- Write option: ~150k gas (~$0.0075)
-- Place limit order: ~100k gas (~$0.005)
-- Cancel order: ~50k gas (~$0.0025)
-- Market order (5 fills): ~250k gas (~$0.0125)
-- Signal exercise: ~30k gas (~$0.0015)
-- Finalize settlement: ~120k gas per holder (~$0.006)
+- Write option: approx. 150k gas (approx. $0.0075)
+- Place limit order: approx. 100k gas (approx. $0.005)
+- Cancel order: approx. 50k gas (approx. $0.0025)
+- Market order (5 fills): approx. 250k gas (approx. $0.0125)
+- Signal exercise: approx. 30k gas (approx. $0.0015)
+- Finalize settlement: approx. 120k gas per holder (approx. $0.006)
 
 Target: Keep all operations under 300k gas to stay economically viable even at higher gas prices.
 
@@ -704,7 +704,7 @@ Target: Keep all operations under 300k gas to stay economically viable even at h
 
 **Integer Overflow/Underflow:**
 - Rust panics on overflow in debug mode
-- Use checked_add(), checked_mul() in production
+- Use `checked_add()`, `checked_mul()` in production
 - Verify all math operations in critical paths
 
 **Collateral Theft:**
@@ -714,10 +714,10 @@ Target: Keep all operations under 300k gas to stay economically viable even at h
   2. Return to writer (on expiry without exercise)
 
 **Time Manipulation:**
-- Expiry uses block.timestamp (Arbitrum block time)
-- Miners have ~15 second influence on timestamp
+- Expiry uses `block.timestamp` (Arbitrum block time)
+- Miners have approx. 15 second influence on timestamp
 - Not exploitable for 1+ hour expiries
-- Consider using block.number for stricter timing (at cost of UX)
+- Consider using `block.number` for stricter timing (at cost of UX)
 
 ### Known Limitations & Risks
 
@@ -727,7 +727,7 @@ Target: Keep all operations under 300k gas to stay economically viable even at h
 - No early exit for writers (except buying back options on market)
 
 **Settlement Finalization Dependency:**
-- Relies on someone calling finalizeExpiry()
+- Relies on someone calling `finalizeExpiry()`
 - If no incentive, holders/writers must do manually
 - Small bounty mechanism recommended for production
 
