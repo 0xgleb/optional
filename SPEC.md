@@ -194,7 +194,7 @@ stateDiagram-v2
 
 ### Contract execution flows
 
-#### Write an Option
+#### Write Call Option (No CLOB)
 
 ```mermaid
 sequenceDiagram
@@ -203,9 +203,25 @@ sequenceDiagram
     participant OptionsToken
     
     Writer->>UnderlyingERC20: approve(OptionsToken, collateral)
-    Writer->>OptionsToken: writeOption(params)
+    Writer->>OptionsToken: writeOption(underlying, quote, strike, expiry, CALL, qty)
     OptionsToken->>UnderlyingERC20: transferFrom(Writer, OptionsToken, collateral)
     OptionsToken->>OptionsToken: mint ERC-1155 tokens to Writer
+    OptionsToken->>OptionsToken: record position (Writer, collateral_locked)
+```
+
+#### Write Put Option (No CLOB)
+
+```mermaid
+sequenceDiagram
+    participant Writer
+    participant QuoteERC20
+    participant OptionsToken
+    
+    Writer->>QuoteERC20: approve(OptionsToken, strike_collateral)
+    Writer->>OptionsToken: writeOption(underlying, quote, strike, expiry, PUT, qty)
+    OptionsToken->>QuoteERC20: transferFrom(Writer, OptionsToken, strike_collateral)
+    OptionsToken->>OptionsToken: mint ERC-1155 tokens to Writer
+    OptionsToken->>OptionsToken: record position (Writer, collateral_locked)
 ```
 
 #### Trade Options
@@ -389,3 +405,156 @@ Storage Access Pattern:
 - Individual position lookup: O(1) via StorageMap key
 - Lazy loading: Only requested slots loaded via SLOAD
 - SDK automatic caching: Multiple reads within transaction nearly free after first access
+
+### CLOB Contract
+
+Responsibilities:
+
+- Maintain orderbooks per option series (ERC-1155 token ID)
+- Match orders (price-time priority, FIFO)
+- Transfer ERC-1155 tokens between traders (via approved transfers)
+- Transfer quote ERC20 premium payments
+- Cancel orders
+- Query orderbook state
+
+Interface (first draft, TBC)
+
+```rust
+sol_storage! {
+    #[entrypoint]
+    pub struct CLOB {
+        // Orders at price: tokenId -> price -> order list
+        mapping(uint256 => mapping(uint256 => Order[])) bid_orders;
+        mapping(uint256 => mapping(uint256 => Order[])) ask_orders;
+        
+        // Best prices (must maintain manually)
+        mapping(uint256 => uint256) best_bid;
+        mapping(uint256 => uint256) best_ask;
+        
+        // Order lookup: orderId -> Order
+        mapping(uint256 => Order) orders;
+        
+        // User's orders: user -> orderId[]
+        mapping(address => uint256[]) user_orders;
+        
+        // Active price levels for scanning: tokenId -> price[]
+        mapping(uint256 => uint256[]) active_bid_prices;
+        mapping(uint256 => uint256[]) active_ask_prices;
+        
+        uint256 next_order_id;
+    }
+    
+    pub struct Order {
+        uint256 order_id;
+        address maker;
+        uint256 token_id;
+        uint256 price;
+        uint256 quantity;
+        uint256 filled;
+        uint8 side; // 0 = Buy, 1 = Sell
+        uint256 timestamp;
+    }
+}
+```
+
+## Future Work
+
+### Automatic Exercise & Cash Settlement
+
+Features:
+
+- Automatic exercise of ITM options at expiry (no manual action required)
+- Cash settlement option (receive profit in quote token instead of physical delivery)
+- Better capital efficiency (quote token collateral for calls when cash-settled)
+
+Requirements: Oracle integration for determining ITM status and settlement prices
+
+### Advanced Order Types
+
+Features:
+
+- Market orders with slippage protection
+- Stop-loss and take-profit orders
+- Spread orders (multi-leg strategies, e.g. vertical spreads / iron condors)
+- Iceberg orders (hidden quantity)
+
+Requirements: Enhanced orderbook logic, potentially off-chain sequencer for complex conditional orders
+
+### Capital Efficiency Improvements
+
+Features:
+
+- Partial collateralization for spread positions (recognize offsetting risk)
+- Portfolio margining (single collateral pool across positions)
+- Cross-account margin to reduce total capital requirements
+
+Requirements: Sophisticated risk calculation, liquidation system, insurance fund
+
+### Trading Improvements
+
+Features:
+
+- RFQ system for large block trades
+- Better price discovery mechanisms
+- Gasless order submission
+
+Requirements: Off-chain infrastructure for order collection and matching
+
+### UX Enhancements
+
+Features:
+
+- Exercise reminders and notifications
+- Token safety/popularity indicators
+- Historical analytics and charts
+- Standard expiry date suggestions
+
+Requirements: Subgraph indexing, frontend improvements
+
+## References & Resources
+
+### Stylus Documentation
+
+- [Stylus Gentle Introduction](https://docs.arbitrum.io/stylus/stylus-gentle-introduction)
+- [Rust SDK Reference](https://docs.rs/stylus-sdk/latest/stylus_sdk/)
+- [Stylus by Example](https://stylus-by-example.org)
+- [OpenZeppelin Stylus Contracts](https://github.com/OpenZeppelin/rust-contracts-stylus)
+
+### Stylus Storage Research
+
+- Arbitrum Stylus Storage Patterns (project artifacts): Critical analysis of StorageMap limitations
+- SwissBorg CLOB Benchmark: Red-Black tree showing 25% overhead vs Solidity
+- Renegade Architecture: Off-chain orderbook with on-chain ZK settlement
+- Superposition: AMM-first approach, future CLOB plans
+
+### DeFi Options Research
+
+- Opyn Gamma Protocol: Physical settlement, separate ERC20 per series
+- Lyra V1: ERC-1155 implementation patterns
+- Premia V3: Per-market isolation
+- Hegic: Peer-to-pool liquidity (contrasting approach)
+
+### Orderbook Design
+
+- Serum DEX: Slab allocator for orderbook storage on Solana
+- dYdX v3: Off-chain orderbook with on-chain settlement (proven model)
+- Vertex Protocol: Hybrid CLOB architecture
+
+### Data Structures
+
+- [Rust Collections](https://doc.rust-lang.org/std/collections/)
+- [BTreeMap (in-memory)](https://doc.rust-lang.org/std/collections/struct.BTreeMap.html)
+- [VecDeque (in-memory)](https://doc.rust-lang.org/std/collections/struct.VecDeque.html)
+- Stylus Storage Types: StorageMap, StorageVec in SDK documentation
+
+### Testing & Security
+
+- Motsu: Pure Rust testing framework for Stylus
+- Proptest: Property-based testing in Rust
+- OpenZeppelin Stylus Audit Report: Security patterns for Rust smart contracts
+
+### Standards
+
+- OCC Options Symbology: Standard ticker format
+- ERC-1155: Multi-token standard specification
+
