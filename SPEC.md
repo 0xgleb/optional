@@ -510,6 +510,36 @@ $$60000 \times 10^{6} \times 10^{(18-6)} = 60000 \times 10^{18}$$
 - Token ID uniqueness: Same parameters always produce same token ID
 - Decimal retrieval: Contract calls `decimals()` dynamically, never hardcoded
 - Precision: All math uses 18-decimal precision, convert to native decimals only for ERC20 transfers
+
+#### Unsafe Token Handling
+
+Certain ERC20 token types are incompatible with the options protocol and must be handled carefully:
+
+**Fee-on-Transfer Tokens:**
+- Tokens that deduct fees during `transfer()` or `transferFrom()` (e.g., some deflationary tokens)
+- **Problem:** Contract expects to receive amount $X$ but actually receives $X - \text{fee}$
+- **Impact:** Collateral shortfall, can't settle all exercises
+- **Protection:** Check balance before/after transfer, revert if mismatch detected (enforceable at contract level)
+
+**Rebasing Tokens:**
+- Tokens where balances change automatically (e.g., stETH, aTokens)
+- **Problem:** Collateral amount changes over time, accounting breaks
+- **Impact:** Either excess collateral benefits random party, or shortfall prevents settlement
+- **Protection:** None at protocol level - permissionless system can't prevent use. Document risks clearly, advise against using rebasing tokens, but ultimately user's choice
+
+**Tokens with Blacklists:**
+- Tokens like USDC can blacklist addresses (e.g., OFAC sanctions)
+- **Problem:** If writer gets blacklisted, can't return collateral or receive strike payment
+- **Impact:** Funds locked permanently
+- **Protection:** None - accept as known risk of using such tokens
+
+**Arithmetic Overflow/Underflow:**
+- Extreme decimal values or amounts could cause overflow in normalization math
+- **Problem:** Normalizing very large amounts or tokens with many decimals: $a \times 10^{(18-d)}$ might exceed uint256
+- **Protection:** Use checked arithmetic (Rust's `checked_mul`, `checked_pow`) - reverts automatically on overflow/underflow
+
+**PoC Approach:** Fully permissionless - any ERC20 pair can be used, any decimal count supported. Contract protects against fee-on-transfer (detectable) and arithmetic overflow (checked math). For rebasing tokens and blacklist tokens, users assume full risk. Buyer beware.
+
 Storage Access Pattern:
 
 - Individual position lookup: O(1) via StorageMap key
