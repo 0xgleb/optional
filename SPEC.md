@@ -291,3 +291,101 @@ sequenceDiagram
     Note over Writer: Collateral returned, option expired worthless
 ```
 
+## Architecture
+
+All contracts in Rust/WASM using Arbitrum Stylus SDK.
+
+### Separate Contracts Design
+
+#### OptionsToken Contract
+
+- ERC-1155 token implementation (OpenZeppelin Stylus)
+- Collateral custody for ALL options (all ERC20 tokens held here)
+- Option minting/burning
+- Exercise intent signaling
+- Settlement execution at expiry
+- Standalone functionality - users never need CLOB to use options
+
+#### Central Limit Order Book (CLOB)
+
+- Orderbook storage (`StorageMap`-based, see storage limitations below)
+- Order matching engine (price-time priority)
+- Trades existing ERC-1155 option tokens only
+- Requires ERC-1155 approval from users
+- Just one trading venue among many possible
+
+#### Why Separate
+
+- Options tokens fully composable (tradeable on AMMs, other DEXs, OTC)
+- Users can write and exercise options without CLOB
+- CLOB is optional trading venue, not core primitive
+- Modular: upgrade CLOB without affecting options
+- Clear security boundaries
+
+### OptionsToken Contract
+
+Responsibilities:
+
+- Mint ERC-1155 tokens when options written
+- Hold all collateral (underlying and quote ERC20s)
+- Track writer positions and locked collateral
+- Record exercise intents before expiry
+- Execute settlements at expiry (exercise or return collateral)
+- Burn tokens on exercise
+
+Interface (draft, TBC)
+
+```rust
+sol_storage! {
+    #[entrypoint]
+    pub struct OptionsToken {
+        // ERC-1155 state (from OpenZeppelin)
+        mapping(address => mapping(uint256 => uint256)) balances;
+        mapping(address => mapping(address => bool)) operator_approvals;
+        
+        // Writer positions: (writer, tokenId) -> Position
+        mapping(bytes32 => Position) positions;
+        
+        // Exercise intents: (holder, tokenId) -> quantity
+        mapping(bytes32 => uint256) exercise_intents;
+        
+        // Option metadata: tokenId -> OptionMetadata
+        mapping(uint256 => OptionMetadata) option_metadata;
+        
+        // Available collateral: (user, token) -> amount
+        mapping(bytes32 => uint256) collateral_balances;
+        
+        // Total supply per token ID
+        mapping(uint256 => uint256) total_supply;
+    }
+    
+    pub struct Position {
+        address writer;
+        uint256 quantity_written;
+        uint256 collateral_locked;
+        address collateral_token;
+    }
+    
+    pub struct OptionMetadata {
+        address underlying;
+        address quote;
+        uint256 strike;
+        uint256 expiry;
+        uint8 option_type; // 0 = Call, 1 = Put
+    }
+}
+```
+
+Token ID is `keccak256` hash of 
+
+- Address of the underlying ERC20 token
+- Address of the quote ERC20 token
+- Strike price (normalized 18 decimals)
+- Expiration timestamp
+- Option kind (call/put)
+
+Storage Access Pattern:
+
+- Individual position lookup: O(1) via StorageMap key
+- Lazy loading: Only requested slots loaded via SLOAD
+- SDK automatic caching: Multiple reads within transaction nearly free after first access
