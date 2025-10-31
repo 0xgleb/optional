@@ -743,11 +743,30 @@ Features:
 
 Requirements: Oracle integration for determining ITM status and settlement prices
 
+### Flash-Loan-Compatible Exercise (Oracle-Free Alternative)
+
+Alternative to oracle-based cash settlement using arbitrage mechanics for price discovery.
+
+**Mechanism:** Arbitrageurs use flash loans to atomically: borrow strike payment -> exercise option -> sell underlying on DEX -> repay loan -> keep profit. Transaction only succeeds if truly ITM; market liquidity reveals true price without oracles.
+
+**Key Properties:**
+- Eliminates oracle manipulation risk ($400M+ losses in 2022)
+- Maximally decentralized (only trusts blockchain + proven AMMs)
+- Best for liquid assets with deep DEX markets (ETH, WBTC, major tokens)
+- Not suitable for long-tail assets without DEX liquidity
+
+**Examples:** Primitive Finance (first implementation), Panoptic (perpetual options on Uniswap v3, 5-10x capital efficiency)
+
+**Trade-offs:** Zero oracle risk vs limited to liquid pairs; superior capital efficiency vs MEV vulnerability; permissionless vs requires sophisticated arbitrageur network
+
+Requirements: Flash loan integration (Aave/Balancer), deep DEX liquidity, MEV protections
+
 ### Advanced Order Types
 
 Features:
 
-- Market orders with slippage protection
+- Partial fills for market orders (fill-or-kill, immediate-or-cancel with minimum fill quantity)
+- Market orders with slippage protection (max price per unit limits)
 - Stop-loss and take-profit orders
 - Spread orders (multi-leg strategies, e.g. vertical spreads / iron condors)
 - Iceberg orders (hidden quantity)
@@ -768,11 +787,15 @@ Requirements: Sophisticated risk calculation, liquidation system, insurance fund
 
 Features:
 
+- Minimum order sizes to prevent spam/dust orders (requires per-quote-token configuration)
+- Price tick sizes for orderbook efficiency
+- Maximum orders per user to prevent spam
+- Maximum price levels and orders per level to bound gas costs
 - RFQ system for large block trades
 - Better price discovery mechanisms
 - Gasless order submission
 
-Requirements: Off-chain infrastructure for order collection and matching
+Requirements: Per-token parameter configuration, governance for setting limits, off-chain infrastructure
 
 ### UX Enhancements
 
