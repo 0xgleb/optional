@@ -478,6 +478,38 @@ Token ID is `keccak256` hash of
 - Expiration timestamp
 - Option kind (call/put)
 
+#### Token Decimals Normalization
+
+ERC20 tokens have varying decimal places, e.g.
+
+- Standard: 18 decimals (ETH, most tokens)
+- Stablecoins: 6 decimals (USDC, USDT)
+- Wrapped BTC: 8 decimals (WBTC)
+
+**Normalization Strategy:**
+
+All amounts are normalized to 18 decimals for internal calculations and token ID generation.
+
+For a token with $d$ decimals, normalize amount $a$ to 18 decimals:
+
+$$\text{normalized\_amount} = a \times 10^{(18 - d)}$$
+
+**Example: 1 WBTC (8 decimals) call at 60,000 USDC (6 decimals) strike**
+
+Normalized underlying amount:
+$$1 \times 10^{8} \times 10^{(18-8)} = 1 \times 10^{18}$$
+
+Normalized strike price:
+$$60000 \times 10^{6} \times 10^{(18-6)} = 60000 \times 10^{18}$$
+
+**Collateral Requirements (in native decimals):**
+- Call options: Lock $1 \times 10^{8}$ WBTC (1:1 underlying)
+- Put options: Lock $60000 \times 10^{6}$ USDC (strike amount in quote token)
+
+**Key Properties:**
+- Token ID uniqueness: Same parameters always produce same token ID
+- Decimal retrieval: Contract calls `decimals()` dynamically, never hardcoded
+- Precision: All math uses 18-decimal precision, convert to native decimals only for ERC20 transfers
 Storage Access Pattern:
 
 - Individual position lookup: O(1) via StorageMap key
