@@ -182,39 +182,68 @@ Outcome: Tokens exchanged per exercise intent, or collateral returned
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Written: writeOption()
-    Written --> Trading: placeOrder()
-    Trading --> Trading: trades execute
-    Trading --> ExerciseSignaled: signalExercise()
-    Trading --> NoExerciseIntent: expiry reached
-    ExerciseSignaled --> Trading: cancelExercise()
-    ExerciseSignaled --> Exercised: expiry + finalize
-    NoExerciseIntent --> Settled: finalize
-    Exercised --> [*]
-    Settled --> [*]
+    [*] --> Written
+    Written --> Trading
+    Trading --> Expired: expiry without exercise signal
+    Trading --> ExerciseSignaled: signal exercise intent
+    ExerciseSignaled --> Expired: cancel signal before expiry
+    ExerciseSignaled --> Exercised: expiry with signal
+    Expired --> [*]: collateral returned
+    Exercised --> [*]: tokens exchanged
 ```
 
-### Contract execution flow
+### Contract execution flows
+
+#### Write an Option
 
 ```mermaid
 sequenceDiagram
     participant Writer
-    participant Contract
+    participant UnderlyingERC20
+    participant OptionsToken
+    
+    Writer->>UnderlyingERC20: approve(OptionsToken, collateral)
+    Writer->>OptionsToken: writeOption(params)
+    OptionsToken->>UnderlyingERC20: transferFrom(Writer, OptionsToken, collateral)
+    OptionsToken->>OptionsToken: mint ERC-1155 tokens to Writer
+```
+
+#### Trade Options
+
+```mermaid
+sequenceDiagram
+    participant Seller
+    participant OptionsToken
+    participant CLOB
+    participant QuoteERC20
     participant Buyer
     
-    Writer->>Contract: writeOption(params)
-    Contract->>Writer: Transfer ERC20 collateral
-    Contract->>Writer: Mint ERC-1155 tokens
+    Seller->>OptionsToken: setApprovalForAll(CLOB, true)
+    Seller->>CLOB: placeOrder(tokenId, price, qty, SELL)
+    CLOB->>CLOB: Add order to book
     
-    Writer->>Contract: placeOrder(sell)
-    Buyer->>Contract: placeOrder(buy, crosses)
-    Contract->>Contract: Match orders
-    Contract->>Buyer: Transfer ERC-1155 tokens
-    Contract->>Writer: Transfer ERC20 premium
+    Buyer->>QuoteERC20: approve(CLOB, premium)
+    Buyer->>CLOB: marketOrder(tokenId, qty, BUY)
+    CLOB->>OptionsToken: safeTransferFrom(Seller, Buyer, tokenId, qty)
+    CLOB->>QuoteERC20: transferFrom(Buyer, Seller, premium)
+```
+
+#### Exercise an Option
+
+```mermaid
+sequenceDiagram
+    participant Holder
+    participant QuoteERC20
+    participant OptionsToken
+    participant UnderlyingERC20
+    participant Writer
     
-    Buyer->>Contract: signalExercise()
-    Note over Contract: At expiry
-    Contract->>Contract: finalizeExpiry()
-    Contract->>Buyer: Transfer ERC20 underlying
-    Contract->>Writer: Transfer ERC20 strike payment
+    Holder->>OptionsToken: signalExercise(tokenId, qty)
+    
+    Note over OptionsToken: At Expiry
+    Holder->>QuoteERC20: approve(OptionsToken, strike_payment)
+    Holder->>OptionsToken: finalizeExpiry(tokenId)
+    OptionsToken->>QuoteERC20: transferFrom(Holder, Writer, strike_payment)
+    OptionsToken->>UnderlyingERC20: transfer(Holder, underlying)
+    OptionsToken->>OptionsToken: burn Holder's tokens
 ```
