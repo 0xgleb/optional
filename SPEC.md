@@ -546,6 +546,46 @@ Storage Access Pattern:
 - Lazy loading: Only requested slots loaded via SLOAD
 - SDK automatic caching: Multiple reads within transaction nearly free after first access
 
+#### Storage Limitations & Design Tradeoffs
+
+**StorageMap Constraints:**
+
+Stylus StorageMap (equivalent to Solidity mapping) has critical limitations:
+
+1. **No iteration:** Cannot enumerate keys or values
+   - Cannot list all active options
+   - Cannot find all positions for a user
+   - Must track metadata separately
+
+2. **No deletion:** Maps cannot be truly erased
+   - Can only zero out values
+   - Storage slots remain allocated
+   - Impacts long-term storage costs
+
+3. **No size queries:** Cannot get count of entries
+   - Must maintain separate counter
+   - Adds gas overhead for updates
+
+**Implications for Options Contract:**
+
+```rust
+// CANNOT do this:
+for position in positions.iter() { ... } // No iter() method
+
+// MUST do this instead:
+// 1. Track position IDs separately
+mapping(address => uint256[]) user_position_ids;
+
+// 2. Query specific positions
+let position = positions.get(position_id);
+```
+
+**Design Decisions:**
+
+- Store position lookups by deterministic key: `keccak256(writer, tokenId)`
+- Use events for off-chain indexing (subgraph) to build queryable state
+- Accept that on-chain enumeration is impossible without extra tracking
+
 ### CLOB Contract
 
 Responsibilities:
@@ -557,7 +597,7 @@ Responsibilities:
 - Cancel orders
 - Query orderbook state
 
-Interface (first draft, TBC)
+Storage Structure (draft, TBC)
 
 ```rust
 sol_storage! {
@@ -596,6 +636,100 @@ sol_storage! {
     }
 }
 ```
+
+### CLOB Trading Safeguards
+
+#### Front-Running Protection
+
+**Price-time priority provides inherent protection:**
+- Orders at same price level execute FIFO by timestamp
+- Sequencer can't prioritize specific orders at same price level
+- Prevents same-block order jumping
+
+**Market order behavior:**
+- PoC: Market orders revert if insufficient liquidity (all-or-nothing)
+- No slippage protection parameters in PoC (full fill or revert)
+
+**Limit order protection:**
+- Makers set exact price, never worse execution
+- Orders only fill at maker's price or better
+- No slippage for makers
+
+## Gas Optimization Targets (Arbitrum)
+
+Estimated costs at 0.1 gwei gas price, 0.05 USD per transaction average:
+
+- Write option: ~150k gas (~$0.0075)
+- Place limit order: ~100k gas (~$0.005)
+- Cancel order: ~50k gas (~$0.0025)
+- Market order (5 fills): ~250k gas (~$0.0125)
+- Signal exercise: ~30k gas (~$0.0015)
+- Finalize settlement: ~120k gas per holder (~$0.006)
+
+Target: Keep all operations under 300k gas to stay economically viable even at higher gas prices.
+
+## Security Considerations
+
+### Testing Strategy
+
+**Unit Testing with Motsu:**
+- Pure Rust testing framework for Stylus contracts
+- Mock VM affordances without running actual blockchain
+- Test individual functions in isolation
+- Fast feedback loop during development
+
+**Property-Based Testing with Proptest:**
+- Generate random test cases to find edge cases
+- Invariant checking across random inputs
+- Critical for financial contracts
+- Example: verify collateral always covers maximum possible payout across random inputs
+
+**Integration Testing:**
+- Test OptionsToken <-> CLOB interactions
+- Test ERC-1155 transfers and approvals
+- Test settlement flows end-to-end
+- Run locally or in CI (no testnet dependency)
+
+### Attack Vectors & Mitigations
+
+**Reentrancy:**
+- Stylus contracts follow checks-effects-interactions pattern
+- Update state before external calls (ERC20 transfers)
+- Consider reentrancy guards on critical functions
+
+**Front-Running:**
+- CLOB uses price-time priority (FIFO), inherently fair
+- Arbitrum's sequencer provides some ordering guarantees
+- Market orders vulnerable to sandwiching (add slippage limits before prod)
+
+**Integer Overflow/Underflow:**
+- Rust panics on overflow in debug mode
+- Use checked_add(), checked_mul() in production
+- Verify all math operations in critical paths
+
+**Collateral Theft:**
+- No admin withdrawal functions
+- Collateral only released through:
+  1. Settlement to holder (on exercise)
+  2. Return to writer (on expiry without exercise)
+
+**Time Manipulation:**
+- Expiry uses block.timestamp (Arbitrum block time)
+- Miners have ~15 second influence on timestamp
+- Not exploitable for 1+ hour expiries
+- Consider using block.number for stricter timing (at cost of UX)
+
+### Known Limitations & Risks
+
+**Collateral Lock Risk:**
+- 100% collateralization means capital inefficient vs cash-settled options
+- Writers' collateral locked until expiry
+- No early exit for writers (except buying back options on market)
+
+**Settlement Finalization Dependency:**
+- Relies on someone calling finalizeExpiry()
+- If no incentive, holders/writers must do manually
+- Small bounty mechanism recommended for production
 
 ## Future Work
 
