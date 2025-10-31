@@ -228,7 +228,7 @@ sequenceDiagram
     CLOB->>QuoteERC20: transferFrom(Buyer, Seller, premium)
 ```
 
-#### Exercise an Option
+#### Call Exercise
 
 ```mermaid
 sequenceDiagram
@@ -238,12 +238,56 @@ sequenceDiagram
     participant UnderlyingERC20
     participant Writer
     
+    Note over Holder,OptionsToken: Before Expiry
     Holder->>OptionsToken: signalExercise(tokenId, qty)
+    OptionsToken->>OptionsToken: Record exercise intent
     
     Note over OptionsToken: At Expiry
     Holder->>QuoteERC20: approve(OptionsToken, strike_payment)
     Holder->>OptionsToken: finalizeExpiry(tokenId)
+    
+    Note over OptionsToken: Execute Call Exercise
     OptionsToken->>QuoteERC20: transferFrom(Holder, Writer, strike_payment)
     OptionsToken->>UnderlyingERC20: transfer(Holder, underlying)
-    OptionsToken->>OptionsToken: burn Holder's tokens
+    OptionsToken->>OptionsToken: burn Holder's ERC-1155 tokens
 ```
+
+#### Put Exercise
+
+```mermaid
+sequenceDiagram
+    participant Holder
+    participant UnderlyingERC20
+    participant OptionsToken
+    participant QuoteERC20
+    participant Writer
+    
+    Note over Holder,OptionsToken: Before Expiry
+    Holder->>OptionsToken: signalExercise(tokenId, qty)
+    
+    Note over OptionsToken: At Expiry
+    Holder->>UnderlyingERC20: approve(OptionsToken, underlying_amount)
+    Holder->>OptionsToken: finalizeExpiry(tokenId)
+    
+    Note over OptionsToken: Execute Put Exercise
+    OptionsToken->>UnderlyingERC20: transferFrom(Holder, Writer, underlying)
+    OptionsToken->>QuoteERC20: transfer(Holder, strike_payment)
+    OptionsToken->>OptionsToken: burn Holder's ERC-1155 tokens
+```
+
+#### Non-Exercise Settlement
+
+```mermaid
+sequenceDiagram
+    participant Writer
+    participant OptionsToken
+    participant CollateralERC20
+    
+    Note over OptionsToken: After Expiry (no exercise signal from holder)
+    Writer->>OptionsToken: finalizeExpiry(tokenId)
+    OptionsToken->>OptionsToken: Verify no exercise intent
+    OptionsToken->>CollateralERC20: transfer(Writer, collateral)
+    
+    Note over Writer: Collateral returned, option expired worthless
+```
+
