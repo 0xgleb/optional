@@ -2,7 +2,9 @@
 
 This file provides guidance to AI agents working with code in this repository.
 
-**CRITICAL: This codebase contains immutable permissionless smart contracts. Code quality, security, and correctness standards are EXTREMELY strict. Deployed contracts CANNOT be upgraded. Bugs can lead to permanent loss of user funds.**
+**CRITICAL: This codebase contains immutable permissionless smart contracts.
+Code quality, security, and correctness standards are EXTREMELY strict. Deployed
+contracts CANNOT be upgraded. Bugs can lead to permanent loss of user funds.**
 
 Relevant docs:
 
@@ -13,41 +15,57 @@ Relevant docs:
 
 ### Before starting work
 
-- Write a comprehensive step-by-step plan to PLAN.md with each task having a corresponding section and a list of subtasks as checkboxes inside of it
+- Write a comprehensive step-by-step plan to PLAN.md with each task having a
+  corresponding section and a list of subtasks as checkboxes inside of it
 - The task sections should follow the format `## Task N. <TASK NAME>`
-- The plan should be a detailed implementation plan and the reasoning behind the design decisions
+- The plan should be a detailed implementation plan and the reasoning behind the
+  design decisions
 - Do not include timelines in the plan as they tend to be inaccurate
-- Remain focused on the task at hand, do not include unrelated improvements or premature optimizations
-- Once you write the plan, ask me to review it. Do not continue until I approve the plan.
+- Remain focused on the task at hand, do not include unrelated improvements or
+  premature optimizations
+- Once you write the plan, ask me to review it. Do not continue until I approve
+  the plan.
 
 ### While implementing
 
 - **CRITICAL: Complete tasks one at a time and wait for review**
   - When asked to complete a task from a plan, complete ONLY that task
-  - Do NOT proceed to the next task until the user reviews and approves your changes
-  - The user manually reviews all git diffs, so changes must be minimal and focused
-  - **Any diff not required to complete the task is a guideline violation** - no drive-by improvements, refactorings, or style changes unless explicitly included in the scope of the task or requested by the user
-  - Exception: If the user explicitly asks you to "complete the whole plan", you may work through multiple tasks
+  - Do NOT proceed to the next task until the user reviews and approves your
+    changes
+  - The user manually reviews all git diffs, so changes must be minimal and
+    focused
+  - **Any diff not required to complete the task is a guideline violation** - no
+    drive-by improvements, refactorings, or style changes unless explicitly
+    included in the scope of the task or requested by the user
+  - Exception: If the user explicitly asks you to "complete the whole plan", you
+    may work through multiple tasks
   - By default, always work one task at a time
 - **CRITICAL: Tasks must be ordered correctly in plans**
   - When creating implementation plans, ensure tasks are in the correct order
   - Earlier tasks MUST NOT depend on code from later tasks
-  - All checks (tests, clippy, fmt) SHOULD pass at the end of each task whenever possible
+  - All checks (tests, clippy, fmt) SHOULD pass at the end of each task whenever
+    possible
   - Focused git diffs and passing checks make reviewing much easier
 - **CRITICAL: Keep PLAN.md in sync with implementation decisions**
-  - If you change approach during implementation, immediately update PLAN.md to reflect the new approach
-  - Plans are living documents during development - update them when you discover better solutions
-  - Implementation and plan must always match - out-of-sync plans are worse than no plan
+  - If you change approach during implementation, immediately update PLAN.md to
+    reflect the new approach
+  - Plans are living documents during development - update them when you
+    discover better solutions
+  - Implementation and plan must always match - out-of-sync plans are worse than
+    no plan
 - Update PLAN.md every time you complete a task by marking checkboxes as `[x]`
-- Keep PLAN.md concise - just tick off checkboxes, do not add "Changes Made" sections or verbose changelogs
+- Keep PLAN.md concise - just tick off checkboxes, do not add "Changes Made"
+  sections or verbose changelogs
 - The code diffs themselves should be self-explanatory and easy to review
 
 ### Before creating a PR
 
 - **CRITICAL**: Delete PLAN.md before submitting changes for review
-- PLAN.md is a transient development file that should ONLY exist on development branches
+- PLAN.md is a transient development file that should ONLY exist on development
+  branches
 - PLAN.md should NEVER appear in pull requests or be merged to main/master
-- The plan is for development tracking only - final documentation goes in commit messages, docstrings, and permanent markdown documents
+- The plan is for development tracking only - final documentation goes in commit
+  messages, docstrings, and permanent markdown documents
 - **CRITICAL**: Update all documentation to reflect your changes
   - **SPEC.md**: Review and update if your changes affect:
     - User flows or contract execution flows
@@ -62,12 +80,18 @@ Relevant docs:
     - Development setup or commands
     - Deployment instructions
     - Architecture overview
-  - **AGENTS.md**: Update if you introduce new patterns, practices, or conventions that other developers should follow
-  - Out-of-date documentation has negative value - it confuses more than it clarifies
+  - **AGENTS.md**: Update if you introduce new patterns, practices, or
+    conventions that other developers should follow
+  - Out-of-date documentation has negative value - it confuses more than it
+    clarifies
 
 ## Project Overview
 
-This is a fully on-chain Central Limit Order Book (CLOB) for options trading, built on Arbitrum using Stylus (Rust/WASM). The system prioritizes simplicity and reliability through physical settlement with 100% collateralization, eliminating the need for oracles, risk management systems, and liquidation mechanisms.
+This is a fully on-chain Central Limit Order Book (CLOB) for options trading,
+built on Arbitrum using Stylus (Rust/WASM). The system prioritizes simplicity
+and reliability through physical settlement with 100% collateralization,
+eliminating the need for oracles, risk management systems, and liquidation
+mechanisms.
 
 **Key Features:**
 
@@ -77,7 +101,10 @@ This is a fully on-chain Central Limit Order Book (CLOB) for options trading, bu
 - **Oracle-Free**: Physical settlement means holders decide when to exercise
 - **Permissionless**: Any ERC20 token pair can have options created
 
-**CRITICAL - Immutability:** These are immutable smart contracts deployed on Arbitrum. Once deployed, they CANNOT be upgraded. Every bug is permanent. Every security flaw is exploitable forever. Code quality and correctness are non-negotiable.
+**CRITICAL - Immutability:** These are immutable smart contracts deployed on
+Arbitrum. Once deployed, they CANNOT be upgraded. Every bug is permanent. Every
+security flaw is exploitable forever. Code quality and correctness are
+non-negotiable.
 
 See SPEC.md for complete system architecture, user flows, and technical details.
 
@@ -103,17 +130,21 @@ See SPEC.md for complete system architecture, user flows, and technical details.
 ### Development Tools
 
 - `cargo fmt` - Format code
-- `cargo clippy --all-targets --all-features -- -D clippy::all -D warnings` - Run Clippy with all warnings denied
+- `cargo clippy --all-targets --all-features -- -D clippy::all -D warnings` -
+  Run Clippy with all warnings denied
 - `cargo check` - Fast type checking without building WASM
 
 ### Nix Development Environment
 
-- `nix develop` - Enter development shell with all dependencies (Rust, cargo-stylus, solc, etc.)
+- `nix develop` - Enter development shell with all dependencies (Rust,
+  cargo-stylus, solc, etc.)
 
 ## Development Workflow Notes
 
-- When running `git diff`, make sure to add `--no-pager` to avoid opening it in the interactive view, e.g. `git --no-pager diff`
-- Always build for `wasm32-unknown-unknown` target when testing contract compatibility
+- When running `git diff`, make sure to add `--no-pager` to avoid opening it in
+  the interactive view, e.g. `git --no-pager diff`
+- Always build for `wasm32-unknown-unknown` target when testing contract
+  compatibility
 - Use `cargo stylus check` frequently to catch Stylus-specific issues early
 
 ## Architecture Overview
@@ -125,10 +156,14 @@ The system consists of two separate Stylus contracts:
 #### OptionsToken Contract
 
 - **ERC-1155 implementation**: Multi-token standard for option series
-- **Collateral custody**: Holds ALL user collateral (underlying and quote tokens)
-- **Option lifecycle management**: Minting, exercise signaling, settlement, burning
-- **Standalone functionality**: Users can write and exercise options without CLOB
-- **Token ID generation**: Deterministic hash of option parameters (underlying, quote, strike, expiry, type)
+- **Collateral custody**: Holds ALL user collateral (underlying and quote
+  tokens)
+- **Option lifecycle management**: Minting, exercise signaling, settlement,
+  burning
+- **Standalone functionality**: Users can write and exercise options without
+  CLOB
+- **Token ID generation**: Deterministic hash of option parameters (underlying,
+  quote, strike, expiry, type)
 
 #### CLOB Contract
 
@@ -148,7 +183,8 @@ The system consists of two separate Stylus contracts:
 
 **Stylus StorageMap Limitations:**
 
-Stylus `StorageMap` is equivalent to Solidity `mapping` with critical constraints:
+Stylus `StorageMap` is equivalent to Solidity `mapping` with critical
+constraints:
 
 1. **No iteration**: Cannot enumerate keys or values
 2. **No deletion**: Can only zero out values, slots remain allocated
@@ -177,7 +213,8 @@ emit PositionCreated { writer, token_id, collateral };
 
 ### Token Decimals Normalization
 
-ERC20 tokens have varying decimals (USDC = 6, WBTC = 8, standard = 18). All amounts are normalized to 18 decimals internally:
+ERC20 tokens have varying decimals (USDC = 6, WBTC = 8, standard = 18). All
+amounts are normalized to 18 decimals internally:
 
 $$\text{normalized\_amount} = \text{amount} \times 10^{(18 - \text{decimals})}$$
 
@@ -197,7 +234,8 @@ $$\text{normalized\_amount} = \text{amount} \times 10^{(18 - \text{decimals})}$$
 
 **CRITICAL: Yearly Reactivation Required**
 
-Stylus contracts MUST be reactivated every 365 days or after any Stylus/ArbOS upgrade to remain callable:
+Stylus contracts MUST be reactivated every 365 days or after any Stylus/ArbOS
+upgrade to remain callable:
 
 - Can be performed by anyone using `cargo-stylus` or ArbWasm precompile
 - Necessary because WASM is lowered to native machine code during activation
@@ -215,25 +253,34 @@ Stylus contracts MUST be reactivated every 365 days or after any Stylus/ArbOS up
 
 ### CRITICAL: Immutable Smart Contract Standards
 
-**These contracts are IMMUTABLE. Bugs are PERMANENT. Code quality is NON-NEGOTIABLE.**
+**These contracts are IMMUTABLE. Bugs are PERMANENT. Code quality is
+NON-NEGOTIABLE.**
 
-- **Zero Tolerance for Panics**: ANY panic is catastrophic. Use `Result` everywhere.
-- **Zero Tolerance for Unchecked Math**: ALL arithmetic must use checked operations
+- **Zero Tolerance for Panics**: ANY panic is catastrophic. Use `Result`
+  everywhere.
+- **Zero Tolerance for Unchecked Math**: ALL arithmetic must use checked
+  operations
 - **Zero Tolerance for Assumptions**: Validate EVERYTHING. Trust NOTHING.
 - **Zero Tolerance for Shortcuts**: No TODOs, no placeholders, no "good enough"
 
 ### CRITICAL: Zero Tolerance for Panics
 
-**In smart contracts, panics are CATASTROPHIC. They can lock user funds forever.**
+**In smart contracts, panics are CATASTROPHIC. They can lock user funds
+forever.**
 
-- **FORBIDDEN**: `unwrap()`, `expect()`, `panic!()`, `unreachable!()`, `unimplemented!()`
-- **FORBIDDEN**: Index operations that can panic (`vec[i]`), use `.get(i).ok_or(Error)?`
+- **FORBIDDEN**: `unwrap()`, `expect()`, `panic!()`, `unreachable!()`,
+  `unimplemented!()`
+- **FORBIDDEN**: Index operations that can panic (`vec[i]`), use
+  `.get(i).ok_or(Error)?`
 - **FORBIDDEN**: Division without checking for zero
 - **FORBIDDEN**: Unchecked arithmetic operations
 - **REQUIRED**: Use `?` operator for error propagation
-- **REQUIRED**: All fallible operations must return `Result` with descriptive errors
-- **REQUIRED**: Use `checked_add`, `checked_sub`, `checked_mul`, `checked_div` for ALL arithmetic
-- **Exception**: `unwrap()` and `expect()` are ONLY allowed in test code (`#[cfg(test)]`)
+- **REQUIRED**: All fallible operations must return `Result` with descriptive
+  errors
+- **REQUIRED**: Use `checked_add`, `checked_sub`, `checked_mul`, `checked_div`
+  for ALL arithmetic
+- **Exception**: `unwrap()` and `expect()` are ONLY allowed in test code
+  (`#[cfg(test)]`)
 
 **Examples:**
 
@@ -270,7 +317,8 @@ let order = orders.get(order_id).ok_or(Error::OrderNotFound)?;
 
 ### CRITICAL: Checked Arithmetic Everywhere
 
-**Smart contracts must use checked arithmetic for ALL operations. Overflows/underflows can lead to catastrophic losses.**
+**Smart contracts must use checked arithmetic for ALL operations.
+Overflows/underflows can lead to catastrophic losses.**
 
 ```rust
 // WRONG: FORBIDDEN - Silent overflow
@@ -354,7 +402,8 @@ fn u256_to_u64(value: U256) -> Result<u64, Error> {
 
 ### CRITICAL: Input Validation
 
-**Validate ALL inputs at contract boundaries. Assume all external input is adversarial.**
+**Validate ALL inputs at contract boundaries. Assume all external input is
+adversarial.**
 
 ```rust
 // CORRECT: REQUIRED - Validate before processing
@@ -395,7 +444,8 @@ pub fn write_option(
 
 ### CRITICAL: Reentrancy Protection
 
-**External calls can reenter. ALWAYS follow checks-effects-interactions pattern.**
+**External calls can reenter. ALWAYS follow checks-effects-interactions
+pattern.**
 
 ```rust
 // WRONG: DANGEROUS - State updated after external call
@@ -434,10 +484,10 @@ pub fn exercise_option(&mut self, token_id: U256, quantity: U256) -> Result<(), 
 
 **Target gas costs (0.1 gwei, ~$0.05/tx):**
 
-- Write option: ~150k gas (~$0.0075)
-- Place limit order: ~100k gas (~$0.005)
-- Market order (5 fills): ~250k gas (~$0.0125)
-- Exercise signal: ~30k gas (~$0.0015)
+- Write option: ~~150k gas (~~$0.0075)
+- Place limit order: ~~100k gas (~~$0.005)
+- Market order (5 fills): ~~250k gas (~~$0.0125)
+- Exercise signal: ~~30k gas (~~$0.0015)
 
 **Optimization techniques:**
 
@@ -492,7 +542,9 @@ fn safe_transfer_from(
 - **Impact**: Funds locked if writer/holder blacklisted
 - **Protection**: None - known risk
 
-**Approach:** Fully permissionless. Protect against fee-on-transfer (detectable) and arithmetic overflow (checked math). Users assume risk for rebasing/blacklist tokens.
+**Approach:** Fully permissionless. Protect against fee-on-transfer (detectable)
+and arithmetic overflow (checked math). Users assume risk for rebasing/blacklist
+tokens.
 
 ### Type Modeling and Enums
 
@@ -784,15 +836,19 @@ mod integration_tests {
 
 ## Workflow Best Practices
 
-- **Always run tests, clippy, and formatters before handing over a piece of work**
+- **Always run tests, clippy, and formatters before handing over a piece of
+  work**
   - Run `cargo test` first, as changing tests can break clippy
-  - Run `cargo clippy --all-targets --all-features -- -D clippy::all -D warnings` next
+  - Run
+    `cargo clippy --all-targets --all-features -- -D clippy::all -D warnings`
+    next
   - Run `cargo stylus check` to verify Stylus compatibility
   - Always run `cargo fmt` last to ensure clean code formatting
 
 ### CRITICAL: Lint Policy
 
-**NEVER add `#[allow(...)]` attributes or disable any lints without explicit user permission.**
+**NEVER add `#[allow(...)]` attributes or disable any lints without explicit
+user permission.**
 
 **Required approach for lint issues:**
 
@@ -883,11 +939,14 @@ Before deploying to mainnet, verify:
 **Before mainnet deployment:**
 
 1. **Internal review**: Multiple team members review every line
-2. **External audit**: Professional smart contract auditor (Trail of Bits, OpenZeppelin, Consensys Diligence)
-3. **Formal verification**: Consider for critical functions (collateral calculation, settlement)
+2. **External audit**: Professional smart contract auditor (Trail of Bits,
+   OpenZeppelin, Consensys Diligence)
+3. **Formal verification**: Consider for critical functions (collateral
+   calculation, settlement)
 4. **Bug bounty**: Offer rewards for vulnerabilities before mainnet
 5. **Testnet deployment**: Extensive testing on Arbitrum Sepolia
-6. **Limited mainnet**: Deploy with caps/limits initially, remove after confidence grows
+6. **Limited mainnet**: Deploy with caps/limits initially, remove after
+   confidence grows
 
 ## Additional Resources
 
@@ -911,4 +970,6 @@ Before deploying to mainnet, verify:
 
 ---
 
-**Remember: These contracts are IMMUTABLE. Every decision is PERMANENT. Code quality and security are absolutely NON-NEGOTIABLE. When in doubt, be MORE strict, not less.**
+**Remember: These contracts are IMMUTABLE. Every decision is PERMANENT. Code
+quality and security are absolutely NON-NEGOTIABLE. When in doubt, be MORE
+strict, not less.**
