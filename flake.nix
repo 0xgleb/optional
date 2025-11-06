@@ -23,7 +23,11 @@
           inherit system;
           overlays = [ fenix.overlays.default ];
         };
-        toolchain = fenix.packages.${system}.default;
+        toolchain = with fenix.packages.${system};
+          combine [
+            default.toolchain
+            targets.wasm32-unknown-unknown.latest.rust-std
+          ];
 
         cargo-stylus = pkgs.rustPlatform.buildRustPackage rec {
           pname = "cargo-stylus";
@@ -60,7 +64,9 @@
           # Rust
           taplo.enable = true;
           rustfmt.enable = true;
-          rustfmt.packageOverrides = { inherit (toolchain) cargo rustfmt; };
+          rustfmt.packageOverrides = with fenix.packages.${system}.default; {
+            inherit cargo rustfmt;
+          };
 
           # TypeScript
           eslint.enable = true;
@@ -78,8 +84,8 @@
             modules = [{
               # https://devenv.sh/reference/options/
               packages = with pkgs;
-                [ cargo-watch cargo-stylus ] ++ lib.optionals stdenv.isDarwin
-                (with darwin.apple_sdk; [
+                [ cargo-watch cargo-stylus lld ]
+                ++ lib.optionals stdenv.isDarwin (with darwin.apple_sdk; [
                   libiconv
                   frameworks.Security
                   frameworks.CoreFoundation
