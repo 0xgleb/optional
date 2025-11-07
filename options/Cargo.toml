@@ -15,7 +15,11 @@ hex.workspace = true
 
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["sha3-keccak"] }
+tokio.workspace = true
+ethers.workspace = true
+eyre.workspace = true
 stylus-sdk = { workspace = true, features = ["stylus-test"] }
+dotenv.workspace = true
 motsu.workspace = true
 proptest.workspace = true
 
@@ -31,3 +35,6 @@ path = "src/main.rs"
 
 [lib]
 crate-type = ["lib", "cdylib"]
+
+[lints]
+workspace = true
