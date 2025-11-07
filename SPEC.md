@@ -548,7 +548,8 @@ $$60000 \times 10^{6} \times 10^{(18-6)} = 60000 \times 10^{18}$$
 **Key Properties:**
 
 - Token ID uniqueness: Same parameters always produce same token ID
-- Decimal retrieval: Contract calls `decimals()` dynamically, never hardcoded
+- Decimal handling: Caller passes decimals as parameters (ERC20 `decimals()` is
+  optional and unreliable)
 - Precision: All math uses 18-decimal precision, convert to native decimals only
   for ERC20 transfers
 

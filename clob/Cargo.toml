@@ -1,0 +1,33 @@
+[package]
+name = "clob"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["arbitrum", "ethereum", "stylus", "clob"]
+description = "On-chain Central Limit Order Book for Arbitrum Stylus"
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+stylus-sdk.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+alloy-primitives = { workspace = true, features = ["sha3-keccak"] }
+stylus-sdk = { workspace = true, features = ["stylus-test"] }
+motsu.workspace = true
+proptest.workspace = true
+
+[features]
+default = ["mini-alloc"]
+export-abi = ["stylus-sdk/export-abi"]
+debug = ["stylus-sdk/debug"]
+mini-alloc = ["stylus-sdk/mini-alloc"]
+
+[[bin]]
+name = "clob"
+path = "src/main.rs"
+
+[lib]
+crate-type = ["lib", "cdylib"]
