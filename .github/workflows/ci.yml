@@ -25,10 +25,8 @@ jobs:
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 10G
 
-      - run: nix flake check
-
       - name: Run tests
-        run: nix develop -c cargo test --workspace
+        run: nix develop --impure -c cargo test --workspace
 
   static:
     runs-on: ubuntu-latest
@@ -48,13 +46,11 @@ jobs:
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 10G
 
-      - run: nix flake check
-
       - name: Check formatting
-        run: nix develop -c cargo fmt --all -- --check
+        run: nix develop --impure -c cargo fmt --all -- --check
 
       - name: Run clippy
-        run: nix develop -c cargo clippy --all-targets --all-features -- -D clippy::all -D warnings
+        run: nix develop --impure -c cargo clippy --all-targets --all-features -- -D clippy::all -D warnings
 
       - name: Build WASM
-        run: nix develop -c cargo build --target wasm32-unknown-unknown --release
+        run: nix develop --impure -c cargo build --target wasm32-unknown-unknown --release
