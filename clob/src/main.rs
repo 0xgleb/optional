@@ -2,7 +2,6 @@
 
 #[cfg(not(any(test, feature = "export-abi")))]
 #[no_mangle]
-#[allow(unsafe_code)]
 pub extern "C" fn main() {}
 
 #[cfg(feature = "export-abi")]

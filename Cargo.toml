@@ -2,9 +2,6 @@
 resolver = "2"
 members = ["options", "clob"]
 
-[workspace.lints.rust]
-unsafe_code = "forbid"
-
 [workspace.lints.clippy]
 unwrap_used = "deny"
 enum_glob_use = "deny"
