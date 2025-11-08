@@ -81,8 +81,14 @@
             modules = [{
               # https://devenv.sh/reference/options/
               packages = with pkgs;
-                [ cargo-watch cargo-stylus lld rust-toolchain ]
-                ++ lib.optionals stdenv.isDarwin (with darwin.apple_sdk; [
+                [
+                  cargo-watch
+                  cargo-stylus
+                  lld
+                  rust-toolchain
+                  openssl
+                  pkg-config
+                ] ++ lib.optionals stdenv.isDarwin (with darwin.apple_sdk; [
                   libiconv
                   frameworks.Security
                   frameworks.CoreFoundation
