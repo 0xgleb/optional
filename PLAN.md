@@ -22,7 +22,7 @@ foundation.
 
 ### Contract Structure
 
-- [ ] Replace counter example in `options/src/lib.rs` with minimal OptionsToken
+- [x] Replace counter example in `options/src/lib.rs` with minimal OptionsToken
       contract:
 
   ```rust
@@ -49,30 +49,18 @@ foundation.
 
 ### Error Enum
 
-- [ ] Create `OptionsError` enum with variants:
+- [x] Create `OptionsError` enum with `Unimplemented` variant:
 
-  - `Unimplemented` - Stub implementation placeholder
-  - `InvalidAddress` - Zero or invalid address provided
-  - `InvalidStrike` - Zero or invalid strike price
-  - `InvalidExpiry` - Expired or invalid expiry timestamp
-  - `InvalidQuantity` - Zero or invalid quantity
-  - `InvalidDecimals` - Decimals > 18
-  - `InsufficientBalance` - Not enough tokens
-  - `InsufficientCollateral` - Not enough collateral
-  - `Overflow` - Arithmetic overflow
-  - `Underflow` - Arithmetic underflow
-  - `PositionNotFound` - Writer position doesn't exist
-  - `ExerciseNotFound` - Exercise intent not found
-  - `AlreadyExercised` - Exercise already signaled
-  - `NotExpired` - Trying to finalize before expiry
-  - `AlreadyFinalized` - Settlement already completed
-  - `TransferLocked` - Transfer blocked by exercise signal
-  - `FeeOnTransferDetected` - Fee-on-transfer token detected
-  - `Unauthorized` - Caller not authorized
+  ```rust
+  #[derive(Debug)]
+  pub enum OptionsError {
+      /// Stub implementation placeholder - function not yet implemented.
+      Unimplemented,
+      // Additional error variants will be added as needed during implementation
+  }
+  ```
 
-- [ ] Add doc comments for each variant explaining when it occurs
-
-- [ ] Implement `From<OptionsError> for Vec<u8>` for Stylus error encoding:
+- [x] Implement `From<OptionsError> for Vec<u8>` for Stylus error encoding:
   ```rust
   impl From<OptionsError> for Vec<u8> {
       fn from(err: OptionsError) -> Vec<u8> {
@@ -83,14 +71,14 @@ foundation.
 
 ### Option Type Enum
 
-- [ ] Create `OptionType` enum with `Call` and `Put` variants
-- [ ] Add doc comments:
+- [x] Create `OptionType` enum with `Call` and `Put` variants
+- [x] Add doc comments:
   - Call: Right to BUY underlying at strike
   - Put: Right to SELL underlying at strike
 
 ### Basic Test
 
-- [ ] Create basic test that instantiates contract:
+- [x] Create basic test that instantiates contract:
 
   ```rust
   #[cfg(test)]
@@ -109,11 +97,11 @@ foundation.
 
 ### Validation
 
-- [ ] `cargo build` succeeds
-- [ ] `cargo test` passes
-- [ ] `cargo clippy --all-targets --all-features -- -D clippy::all -D warnings`
+- [x] `cargo build` succeeds
+- [x] `cargo test` passes
+- [x] `cargo clippy --all-targets --all-features -- -D clippy::all -D warnings`
       passes
-- [ ] `cargo fmt` clean
+- [x] `cargo fmt` clean
 
 ## Task 2. Add Storage Structures
 

@@ -722,6 +722,77 @@ use crate::errors::OptionsError;
 
 **Smart contracts require exhaustive testing:**
 
+#### Test Quality Guidelines
+
+**CRITICAL: Tests must validate OUR code logic, not language primitives.**
+
+**FORBIDDEN:**
+
+```rust
+// WRONG: Testing language primitives
+#[test]
+fn test_enum_equality() {
+    assert_eq!(OptionType::Call, OptionType::Call);  // Tests Rust's ==, not our logic
+}
+
+#[test]
+fn test_error_conversion() {
+    let err = OptionsError::Invalid;
+    let bytes: Vec<u8> = err.into();
+    assert!(!bytes.is_empty());  // Tests format! and into_bytes(), not our logic
+}
+```
+
+**CORRECT:**
+
+```rust
+// CORRECT: Testing our code logic
+#[test]
+fn test_write_option_stub_returns_unimplemented() {
+    let result = contract.write_call_option(...);
+    assert!(matches!(result, Err(OptionsError::Unimplemented)));  // Tests OUR stub
+}
+
+#[test]
+fn test_calculate_collateral_overflow() {
+    let result = contract.calculate_collateral(U256::MAX, U256::from(2));
+    assert!(matches!(result, Err(OptionsError::Overflow)));  // Tests OUR overflow handling
+}
+```
+
+**Rule**: If removing your code wouldn't break the test, the test is useless.
+
+#### Incremental Development
+
+**CRITICAL: Add types/errors/functionality incrementally as needed, not
+upfront.**
+
+**WRONG:**
+
+```rust
+// Defining 20 error variants when we only need 1
+pub enum OptionsError {
+    Unimplemented,
+    InvalidAddress,
+    InvalidStrike,
+    // ... 17 more variants we don't use yet
+}
+```
+
+**CORRECT:**
+
+```rust
+// Start with only what's needed
+pub enum OptionsError {
+    Unimplemented,
+    // Additional error variants will be added as needed during implementation
+}
+
+// Add errors when implementing the logic that needs them
+```
+
+**Rule**: Don't write code for future requirements. Add it when you need it.
+
 #### Unit Tests with Motsu
 
 ```rust

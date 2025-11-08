@@ -1,112 +1,48 @@
-//!
-//! Stylus Hello World
-//!
-//! The following contract implements the Counter example from Foundry.
-//!
-//! ```solidity
-//! contract Counter {
-//!     uint256 public number;
-//!     function setNumber(uint256 newNumber) public {
-//!         number = newNumber;
-//!     }
-//!     function increment() public {
-//!         number++;
-//!     }
-//! }
-//! ```
-//!
-//! The program is ABI-equivalent with Solidity, which means you can call it from both Solidity and Rust.
-//! To do this, run `cargo stylus export-abi`.
-//!
-//! Note: this code is a template-only and has not been audited.
-//!
-// Allow `cargo stylus export-abi` to generate a main function.
 #![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
 #![cfg_attr(not(any(test, feature = "export-abi")), no_std)]
-
-#[macro_use]
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{format, vec, vec::Vec};
 
-/// Import items from the SDK. The prelude contains common traits and macros.
-use stylus_sdk::{alloy_primitives::U256, prelude::*};
+use stylus_sdk::prelude::*;
 
-// Define some persistent storage using the Solidity ABI.
-// `Counter` will be the entrypoint.
-sol_storage! {
-    #[entrypoint]
-    pub struct Counter {
-        uint256 number;
+/// Represents the type of option contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionType {
+    /// Call option: Right to BUY underlying at strike price.
+    Call,
+    /// Put option: Right to SELL underlying at strike price.
+    Put,
+}
+
+/// Errors that can occur in the OptionsToken contract.
+#[derive(Debug)]
+pub enum OptionsError {
+    /// Stub implementation placeholder - function not yet implemented.
+    Unimplemented,
+    // Additional error variants will be added as needed during implementation
+}
+
+impl From<OptionsError> for Vec<u8> {
+    fn from(err: OptionsError) -> Self {
+        format!("{err:?}").into_bytes()
     }
 }
 
-/// Declare that `Counter` is a contract with the following external methods.
+sol_storage! {
+    #[entrypoint]
+    pub struct OptionsToken {
+        // Storage will be added in Task 2
+    }
+}
+
 #[public]
-impl Counter {
-    /// Gets the number from storage.
-    #[must_use]
-    pub fn number(&self) -> U256 {
-        self.number.get()
-    }
-
-    /// Sets a number in storage to a user-specified value.
-    pub fn set_number(&mut self, new_number: U256) {
-        self.number.set(new_number);
-    }
-
-    /// Sets a number in storage to a user-specified value.
-    pub fn mul_number(&mut self, new_number: U256) {
-        self.number.set(new_number * self.number.get());
-    }
-
-    /// Sets a number in storage to a user-specified value.
-    pub fn add_number(&mut self, new_number: U256) {
-        self.number.set(new_number + self.number.get());
-    }
-
-    /// Increments `number` and updates its value in storage.
-    pub fn increment(&mut self) {
-        let number = self.number.get();
-        self.set_number(number + U256::from(1));
-    }
-
-    /// Adds the wei value from msg_value to the number in storage.
-    #[payable]
-    pub fn add_from_msg_value(&mut self) {
-        let number = self.number.get();
-        self.set_number(number + self.vm().msg_value());
-    }
+impl OptionsToken {
+    // Methods will be added in later tasks
 }
 
 #[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_counter() {
-        use stylus_sdk::testing::*;
-        let vm = TestVM::default();
-        let mut contract = Counter::from(&vm);
-
-        assert_eq!(U256::ZERO, contract.number());
-
-        contract.increment();
-        assert_eq!(U256::from(1), contract.number());
-
-        contract.add_number(U256::from(3));
-        assert_eq!(U256::from(4), contract.number());
-
-        contract.mul_number(U256::from(2));
-        assert_eq!(U256::from(8), contract.number());
-
-        contract.set_number(U256::from(100));
-        assert_eq!(U256::from(100), contract.number());
-
-        // Override the msg value for future contract method invocations.
-        vm.set_value(U256::from(2));
-
-        contract.add_from_msg_value();
-        assert_eq!(U256::from(102), contract.number());
-    }
+mod tests {
+    // Tests will be added when implementing actual logic
+    // For Issue #2 (stubs), tests verify functions return Err(OptionsError::Unimplemented)
 }
