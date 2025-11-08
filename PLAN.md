@@ -179,28 +179,28 @@ foundation.
 
 ### Methods
 
-- [ ] Implement
-      `write_call_option(&mut self, underlying: Address, quote: Address, strike: U256, expiry: U256, quantity: U256, underlying_decimals: u8, quote_decimals: u8) -> Result<U256, OptionsError>`:
+- [x] Implement `write_call_option()`:
 
+  - Parameters: strike, expiry, quantity, underlying: Token, quote: Token
   - Doc: Locks underlying tokens as collateral (1:1), mints ERC-1155 tokens,
     returns deterministic token ID
-  - Body: `Err(OptionsError::Unimplemented)`
+  - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
 
-- [ ] Implement
-      `write_put_option(&mut self, underlying: Address, quote: Address, strike: U256, expiry: U256, quantity: U256, underlying_decimals: u8, quote_decimals: u8) -> Result<U256, OptionsError>`:
+- [x] Implement `write_put_option()`:
+  - Parameters: strike, expiry, quantity, underlying: Token, quote: Token
   - Doc: Locks quote tokens as collateral (strike \* quantity), mints ERC-1155
     tokens, returns deterministic token ID
-  - Body: `Err(OptionsError::Unimplemented)`
+  - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
 
 ### Unit Tests
 
-- [ ] Create `test_write_call_option_returns_unimplemented()`
-- [ ] Create `test_write_put_option_returns_unimplemented()`
+- [x] Create `test_write_call_option_returns_unimplemented()`
+- [x] Create `test_write_put_option_returns_unimplemented()`
 
 ### Property Tests
 
-- [ ] Create `prop_write_options_unimplemented()` with strategies:
-  - Addresses: non-zero (1..=u160::MAX)
+- [x] Create `prop_write_options_unimplemented()` with strategies:
+  - Addresses: any [u8; 20]
   - Strike: 1..1_000_000_000u64
   - Expiry: any u64
   - Quantity: 1..1_000_000_000u64
@@ -209,11 +209,11 @@ foundation.
 
 ### Validation
 
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
-- [ ] `cargo build --target wasm32-unknown-unknown --release` succeeds
+- [x] `cargo test` passes
+- [x] `cargo clippy` passes
+- [x] `cargo build --target wasm32-unknown-unknown --release` succeeds
 
-## Task 4. Implement Exercise Signaling API (Stubs)
+## Task 3. Implement Exercise Signaling API (Stubs)
 
 **Goal**: Exercise intent management with fund locking.
 
@@ -265,7 +265,7 @@ foundation.
 - [ ] `cargo test` passes
 - [ ] `cargo clippy` passes
 
-## Task 5. Implement Settlement API (Stubs)
+## Task 4. Implement Settlement API (Stubs)
 
 **Goal**: Expiry finalization and settlement.
 
@@ -310,7 +310,7 @@ foundation.
 - [ ] `cargo test` passes
 - [ ] `cargo clippy` passes
 
-## Task 6. Final Integration and Verification
+## Task 5. Final Integration and Verification
 
 **Goal**: Verify complete contract compiles for deployment.
 
