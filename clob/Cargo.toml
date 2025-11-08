@@ -1,12 +1,11 @@
 [package]
-name = "stylus-hello-world"
-version = "0.1.11"
+name = "clob"
+version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-homepage = "https://github.com/OffchainLabs/stylus-hello-world"
-repository = "https://github.com/OffchainLabs/stylus-hello-world"
-keywords = ["arbitrum", "ethereum", "stylus", "alloy"]
-description = "Stylus hello world example"
+repository = "https://github.com/0xgleb/optional"
+keywords = ["arbitrum", "ethereum", "stylus", "clob"]
+description = "On-chain Central Limit Order Book for Arbitrum Stylus"
 
 [dependencies]
 alloy-primitives = "=0.8.20"
@@ -21,6 +20,8 @@ ethers = "2.0"
 eyre = "0.6.8"
 stylus-sdk = { version = "0.9.0", features = ["stylus-test"] }
 dotenv = "0.15.0"
+motsu = "0.1.0"
+proptest = "1.4"
 
 [features]
 default = ["mini-alloc"]
@@ -29,18 +30,27 @@ debug = ["stylus-sdk/debug"]
 mini-alloc = ["stylus-sdk/mini-alloc"]
 
 [[bin]]
-name = "stylus-hello-world"
+name = "clob"
 path = "src/main.rs"
 
 [lib]
 crate-type = ["lib", "cdylib"]
+
+[lints.clippy]
+unwrap_used = "deny"
+enum_glob_use = "deny"
+
+# `priority = -1` allow for allowing lints enabled by a group to be re-disabled
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+
+doc_markdown = "allow"
+items_after_statements = "allow"
+redundant_pub_crate = "allow"
 
 [profile.release]
 codegen-units = 1
 strip = true
 lto = true
 panic = "abort"
-
-# If you need to reduce the binary size, it is advisable to try other
-# optimization levels, such as "s" and "z"
 opt-level = 3

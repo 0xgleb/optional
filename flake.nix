@@ -12,22 +12,22 @@
       git-hooks.follows = "git-hooks";
     };
 
-    fenix.url = "github:nix-community/fenix";
-    fenix.inputs.nixpkgs.follows = "nixpkgs";
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { nixpkgs, flake-utils, devenv, git-hooks, fenix, ... }@inputs:
+  outputs =
+    { nixpkgs, flake-utils, devenv, git-hooks, rust-overlay, ... }@inputs:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ fenix.overlays.default ];
+          overlays = [ rust-overlay.overlays.default ];
         };
-        toolchain = with fenix.packages.${system};
-          combine [
-            default.toolchain
-            targets.wasm32-unknown-unknown.latest.rust-std
-          ];
+
+        rust-toolchain = pkgs.rust-bin.stable."1.81.0".default.override {
+          targets = [ "wasm32-unknown-unknown" ];
+        };
 
         cargo-stylus = pkgs.rustPlatform.buildRustPackage rec {
           pname = "cargo-stylus";
@@ -64,9 +64,6 @@
           # Rust
           taplo.enable = true;
           rustfmt.enable = true;
-          rustfmt.packageOverrides = with fenix.packages.${system}.default; {
-            inherit cargo rustfmt;
-          };
 
           # TypeScript
           eslint.enable = true;
@@ -84,8 +81,14 @@
             modules = [{
               # https://devenv.sh/reference/options/
               packages = with pkgs;
-                [ cargo-watch cargo-stylus lld ]
-                ++ lib.optionals stdenv.isDarwin (with darwin.apple_sdk; [
+                [
+                  cargo-watch
+                  cargo-stylus
+                  lld
+                  rust-toolchain
+                  openssl
+                  pkg-config
+                ] ++ lib.optionals stdenv.isDarwin (with darwin.apple_sdk; [
                   libiconv
                   frameworks.Security
                   frameworks.CoreFoundation
@@ -99,10 +102,7 @@
                 javascript.pnpm.enable = true;
                 typescript.enable = true;
 
-                rust = {
-                  enable = true;
-                  inherit toolchain;
-                };
+                rust.enable = false;
               };
 
               inherit env;
