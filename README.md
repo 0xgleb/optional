@@ -23,17 +23,20 @@ Arbitrum. The system consists of two smart contracts:
 # Enter development environment
 nix develop
 
-# Build both contracts
+# Build and test options contract
+cd options
 cargo build
-
-# Run tests
 cargo test
-
-# Run linting
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D clippy::all -D warnings
+cargo build --target wasm32-unknown-unknown --release
 
-# Build for deployment
+# Build and test clob contract
+cd ../clob
+cargo build
+cargo test
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D clippy::all -D warnings
 cargo build --target wasm32-unknown-unknown --release
 ```
 
@@ -41,11 +44,23 @@ cargo build --target wasm32-unknown-unknown --release
 
 ```
 optional/
-├── options/        # Options token contract (ERC-1155)
-├── clob/           # Central Limit Order Book contract
-├── Cargo.toml      # Workspace configuration
-└── flake.nix       # Nix development environment
+├── options/            # Options token contract (ERC-1155)
+│   ├── Cargo.toml
+│   ├── rust-toolchain.toml
+│   ├── clippy.toml
+│   └── src/
+├── clob/               # Central Limit Order Book contract
+│   ├── Cargo.toml
+│   ├── rust-toolchain.toml
+│   ├── clippy.toml
+│   └── src/
+├── flake.nix           # Nix development environment (shared)
+└── .github/workflows/  # CI for both projects
 ```
+
+**Note:** Each contract is a completely standalone Stylus project. Cargo
+workspaces are not supported by `cargo stylus`, so both projects must be
+independent.
 
 ### Deployment
 
@@ -53,7 +68,7 @@ See [SPEC.md](./SPEC.md) for architecture details and deployment instructions.
 
 ### CI/CD
 
-GitHub Actions runs:
+GitHub Actions runs checks for both projects:
 
 - Unit tests
 - Formatting checks (rustfmt)

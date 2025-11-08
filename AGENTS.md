@@ -115,6 +115,9 @@ See SPEC.md for complete system architecture, user flows, and technical details.
 **CRITICAL: Always use Stylus-specific tooling for smart contract development**
 
 - `cargo stylus check` - Check contract validity and compatibility with Stylus
+  - **NOTE**: This command can be buggy and may hang or return errors. The user
+    will typically run this themselves. If running via automation, use a timeout
+    (e.g., 60 seconds).
 - `cargo stylus deploy` - Deploy contract to Arbitrum (requires funded wallet)
 - `cargo stylus activate` - Activate deployed contract (required every 365 days)
 - `cargo stylus export-abi` - Export contract ABI for frontend integration

@@ -1,27 +1,27 @@
 [package]
 name = "options"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/0xgleb/optional"
 keywords = ["arbitrum", "ethereum", "stylus", "options"]
 description = "On-chain options token contract for Arbitrum Stylus"
 
 [dependencies]
-alloy-primitives.workspace = true
-alloy-sol-types.workspace = true
-stylus-sdk.workspace = true
-hex.workspace = true
+alloy-primitives = "=0.8.20"
+alloy-sol-types = "=0.8.20"
+stylus-sdk = "0.9.0"
+hex = { version = "0.4", default-features = false }
 
 [dev-dependencies]
-alloy-primitives = { workspace = true, features = ["sha3-keccak"] }
-tokio.workspace = true
-ethers.workspace = true
-eyre.workspace = true
-stylus-sdk = { workspace = true, features = ["stylus-test"] }
-dotenv.workspace = true
-motsu.workspace = true
-proptest.workspace = true
+alloy-primitives = { version = "=0.8.20", features = ["sha3-keccak"] }
+tokio = { version = "1.12.0", features = ["full"] }
+ethers = "2.0"
+eyre = "0.6.8"
+stylus-sdk = { version = "0.9.0", features = ["stylus-test"] }
+dotenv = "0.15.0"
+motsu = "0.1.0"
+proptest = "1.4"
 
 [features]
 default = ["mini-alloc"]
@@ -36,5 +36,21 @@ path = "src/main.rs"
 [lib]
 crate-type = ["lib", "cdylib"]
 
-[lints]
-workspace = true
+[lints.clippy]
+unwrap_used = "deny"
+enum_glob_use = "deny"
+
+# `priority = -1` allow for allowing lints enabled by a group to be re-disabled
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+
+doc_markdown = "allow"
+items_after_statements = "allow"
+redundant_pub_crate = "allow"
+
+[profile.release]
+codegen-units = 1
+strip = true
+lto = true
+panic = "abort"
+opt-level = 3

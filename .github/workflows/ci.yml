@@ -7,7 +7,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
-  test:
+  test-options:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,9 +26,30 @@ jobs:
           gc-max-store-size-linux: 10G
 
       - name: Run tests
-        run: nix develop --impure -c cargo test --workspace
+        run: nix develop --impure -c bash -c "cd options && cargo test"
 
-  static:
+  test-clob:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 10G
+
+      - name: Run tests
+        run: nix develop --impure -c bash -c "cd clob && cargo test"
+
+  static-options:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,10 +68,37 @@ jobs:
           gc-max-store-size-linux: 10G
 
       - name: Check formatting
-        run: nix develop --impure -c cargo fmt --all -- --check
+        run: nix develop --impure -c bash -c "cd options && cargo fmt --all -- --check"
 
       - name: Run clippy
-        run: nix develop --impure -c cargo clippy --all-targets --all-features -- -D clippy::all -D warnings
+        run: nix develop --impure -c bash -c "cd options && cargo clippy --all-targets --all-features -- -D clippy::all -D warnings"
 
       - name: Build WASM
-        run: nix develop --impure -c cargo build --target wasm32-unknown-unknown --release
+        run: nix develop --impure -c bash -c "cd options && cargo build --target wasm32-unknown-unknown --release"
+
+  static-clob:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 10G
+
+      - name: Check formatting
+        run: nix develop --impure -c bash -c "cd clob && cargo fmt --all -- --check"
+
+      - name: Run clippy
+        run: nix develop --impure -c bash -c "cd clob && cargo clippy --all-targets --all-features -- -D clippy::all -D warnings"
+
+      - name: Build WASM
+        run: nix develop --impure -c bash -c "cd clob && cargo build --target wasm32-unknown-unknown --release"
