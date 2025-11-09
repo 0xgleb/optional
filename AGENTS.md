@@ -1064,6 +1064,55 @@ mod integration_tests {
 
 **If a line of code isn't tested, assume it's broken.**
 
+### CRITICAL: Test Quality Standards
+
+**ABSOLUTE PROHIBITION: NEVER write helper functions or stubs that duplicate
+production logic.**
+
+Tests MUST call the actual contract methods being tested. Tests that call
+anything other than the real production code are WORTHLESS GARBAGE.
+
+**FORBIDDEN:**
+
+```rust
+// CATASTROPHIC - Testing a helper function, not the real code
+const fn test_write_call_stub(...) -> Result<B256, OptionsError> {
+    let _ = (strike, expiry, quantity, underlying, quote);
+    Err(OptionsError::Unimplemented(Unimplemented {}))
+}
+
+#[test]
+fn test_write_call_option() {
+    let result = test_write_call_stub(...);  // USELESS - not testing real code!
+    assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+}
+```
+
+**CORRECT:**
+
+```rust
+// CORRECT - Testing the ACTUAL contract method
+#[test]
+fn test_write_call_option() {
+    let mut contract = setup_contract();
+    let result = contract.write_call_option(...);  // Testing REAL code!
+    assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+}
+```
+
+**Why this matters:**
+
+- Helper stubs become stale the INSTANT the real code changes
+- You're testing your test code, not your production code
+- Tests pass while production code is completely broken
+- Creates false confidence - worse than no tests at all
+- Adds dead code that serves zero purpose
+
+**Rule**: If you can delete the production code and the test still compiles and
+passes, the test is GARBAGE and must be deleted or rewritten.
+
+**No exceptions. Ever.**
+
 ## Workflow Best Practices
 
 - **Always run tests, clippy, and formatters before handing over a piece of

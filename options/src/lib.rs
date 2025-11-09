@@ -6,7 +6,7 @@ use alloc::{vec, vec::Vec};
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::sol;
 
-use stylus_sdk::{prelude::*, storage::StorageU256};
+use stylus_sdk::prelude::*;
 
 sol! {
     /// Represents a token with its address and decimal precision.
@@ -34,7 +34,7 @@ pub enum OptionType {
 }
 
 sol! {
-    /// Errors that can occur in the OptionsToken contract.
+    /// Errors that can occur in the Options contract.
     #[derive(Debug)]
     error Unimplemented();
 }
@@ -47,13 +47,13 @@ pub enum OptionsError {
 
 sol_storage! {
     #[entrypoint]
-    pub struct OptionsToken {
-        StorageU256 dummy;
+    pub struct Options {
+        bool placeholder;
     }
 }
 
 #[public]
-impl OptionsToken {
+impl Options {
     /// Writes a call option by locking underlying tokens as collateral (1:1).
     ///
     /// Mints ERC-1155 tokens representing the call option and returns a deterministic token ID
@@ -165,37 +165,12 @@ impl OptionsToken {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use proptest::prelude::*;
+    use motsu::prelude::*;
 
     use super::*;
 
-    // Helper to test write option stubs - doesn't use contract instance since stubs ignore self
-    const fn test_write_call_stub(
-        strike: U256,
-        expiry: U256,
-        quantity: U256,
-        underlying: Token,
-        quote: Token,
-    ) -> Result<B256, OptionsError> {
-        // Call stub logic directly (function doesn't use self)
-        let _ = (strike, expiry, quantity, underlying, quote);
-        Err(OptionsError::Unimplemented(Unimplemented {}))
-    }
-
-    const fn test_write_put_stub(
-        strike: U256,
-        expiry: U256,
-        quantity: U256,
-        underlying: Token,
-        quote: Token,
-    ) -> Result<B256, OptionsError> {
-        // Call stub logic directly (function doesn't use self)
-        let _ = (strike, expiry, quantity, underlying, quote);
-        Err(OptionsError::Unimplemented(Unimplemented {}))
-    }
-
-    #[test]
-    fn test_write_call_option_returns_unimplemented() {
+    #[motsu::test]
+    fn test_write_call_option_returns_unimplemented(contract: Contract<Options>, alice: Address) {
         let underlying = Token {
             address: Address::ZERO,
             decimals: 18,
@@ -205,7 +180,7 @@ mod tests {
             decimals: 6,
         };
 
-        let result = test_write_call_stub(
+        let result = contract.sender(alice).write_call_option(
             U256::from(1000),
             U256::from(1_234_567_890),
             U256::from(100),
@@ -216,8 +191,8 @@ mod tests {
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
     }
 
-    #[test]
-    fn test_write_put_option_returns_unimplemented() {
+    #[motsu::test]
+    fn test_write_put_option_returns_unimplemented(contract: Contract<Options>, alice: Address) {
         let underlying = Token {
             address: Address::ZERO,
             decimals: 18,
@@ -227,7 +202,7 @@ mod tests {
             decimals: 6,
         };
 
-        let result = test_write_put_stub(
+        let result = contract.sender(alice).write_put_option(
             U256::from(1000),
             U256::from(1_234_567_890),
             U256::from(100),
@@ -238,110 +213,27 @@ mod tests {
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
     }
 
-    // Helper to test exercise stubs
-    const fn test_exercise_call_stub(token_id: B256, quantity: U256) -> Result<(), OptionsError> {
-        let _ = (token_id, quantity);
-        Err(OptionsError::Unimplemented(Unimplemented {}))
-    }
-
-    const fn test_exercise_put_stub(token_id: B256, quantity: U256) -> Result<(), OptionsError> {
-        let _ = (token_id, quantity);
-        Err(OptionsError::Unimplemented(Unimplemented {}))
-    }
-
-    #[test]
-    fn test_exercise_call_unimplemented() {
-        let result = test_exercise_call_stub(B256::ZERO, U256::from(10));
+    #[motsu::test]
+    fn test_exercise_call_unimplemented(contract: Contract<Options>, alice: Address) {
+        let result = contract
+            .sender(alice)
+            .exercise_call(B256::ZERO, U256::from(10));
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
     }
 
-    #[test]
-    fn test_exercise_put_unimplemented() {
-        let result = test_exercise_put_stub(B256::ZERO, U256::from(10));
+    #[motsu::test]
+    fn test_exercise_put_unimplemented(contract: Contract<Options>, alice: Address) {
+        let result = contract
+            .sender(alice)
+            .exercise_put(B256::ZERO, U256::from(10));
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
     }
 
-    // Helper to test collateral withdrawal stub
-    const fn test_withdraw_expired_collateral_stub(
-        token_id: B256,
-        quantity: U256,
-    ) -> Result<(), OptionsError> {
-        let _ = (token_id, quantity);
-        Err(OptionsError::Unimplemented(Unimplemented {}))
-    }
-
-    #[test]
-    fn test_withdraw_expired_collateral_unimplemented() {
-        let result = test_withdraw_expired_collateral_stub(B256::ZERO, U256::from(10));
+    #[motsu::test]
+    fn test_withdraw_expired_collateral_unimplemented(contract: Contract<Options>, alice: Address) {
+        let result = contract
+            .sender(alice)
+            .withdraw_expired_collateral(B256::ZERO, U256::from(10));
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
-    }
-
-    proptest! {
-        #[test]
-        fn prop_write_options_unimplemented(
-            underlying_bytes in any::<[u8; 20]>(),
-            quote_bytes in any::<[u8; 20]>(),
-            strike in 1u64..1_000_000_000u64,
-            expiry in any::<u64>(),
-            quantity in 1u64..1_000_000_000u64,
-            underlying_decimals in 0u8..=18u8,
-            quote_decimals in 0u8..=18u8,
-        ) {
-            let underlying = Token {
-                address: Address::from(underlying_bytes),
-                decimals: underlying_decimals,
-            };
-            let quote = Token {
-                address: Address::from(quote_bytes),
-                decimals: quote_decimals,
-            };
-
-            let call_result = test_write_call_stub(
-                U256::from(strike),
-                U256::from(expiry),
-                U256::from(quantity),
-                underlying,
-                quote,
-            );
-
-            let put_result = test_write_put_stub(
-                U256::from(strike),
-                U256::from(expiry),
-                U256::from(quantity),
-                underlying,
-                quote,
-            );
-
-            assert!(matches!(call_result, Err(OptionsError::Unimplemented(_))));
-            assert!(matches!(put_result, Err(OptionsError::Unimplemented(_))));
-        }
-
-        #[test]
-        fn prop_exercise_unimplemented(
-            token_bytes in any::<[u8; 32]>(),
-            quantity in 1u64..1_000_000_000u64,
-        ) {
-            let token_id = B256::from(token_bytes);
-            let quantity = U256::from(quantity);
-
-            let exercise_call_result = test_exercise_call_stub(token_id, quantity);
-            let exercise_put_result = test_exercise_put_stub(token_id, quantity);
-
-            assert!(matches!(exercise_call_result, Err(OptionsError::Unimplemented(_))));
-            assert!(matches!(exercise_put_result, Err(OptionsError::Unimplemented(_))));
-        }
-
-        #[test]
-        fn prop_withdraw_expired_collateral_unimplemented(
-            token_bytes in any::<[u8; 32]>(),
-            quantity in 1u64..1_000_000_000u64,
-        ) {
-            let token_id = B256::from(token_bytes);
-            let quantity = U256::from(quantity);
-
-            let withdraw_result = test_withdraw_expired_collateral_stub(token_id, quantity);
-
-            assert!(matches!(withdraw_result, Err(OptionsError::Unimplemented(_))));
-        }
     }
 }
