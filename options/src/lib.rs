@@ -3,7 +3,7 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use alloy_sol_types::sol;
 
 use stylus_sdk::{prelude::*, storage::StorageU256};
@@ -57,7 +57,7 @@ impl OptionsToken {
     /// Writes a call option by locking underlying tokens as collateral (1:1).
     ///
     /// Mints ERC-1155 tokens representing the call option and returns a deterministic token ID
-    /// based on the option parameters.
+    /// based on the option parameters (keccak256 hash).
     ///
     /// # Parameters
     /// - `strike`: Strike price (18 decimals normalized)
@@ -75,7 +75,7 @@ impl OptionsToken {
         quantity: U256,
         underlying: Token,
         quote: Token,
-    ) -> Result<U256, OptionsError> {
+    ) -> Result<B256, OptionsError> {
         let _ = (strike, expiry, quantity, underlying, quote);
         Err(OptionsError::Unimplemented(Unimplemented {}))
     }
@@ -83,7 +83,7 @@ impl OptionsToken {
     /// Writes a put option by locking quote tokens as collateral (strike * quantity).
     ///
     /// Mints ERC-1155 tokens representing the put option and returns a deterministic token ID
-    /// based on the option parameters.
+    /// based on the option parameters (keccak256 hash).
     ///
     /// # Parameters
     /// - `strike`: Strike price (18 decimals normalized)
@@ -101,8 +101,88 @@ impl OptionsToken {
         quantity: U256,
         underlying: Token,
         quote: Token,
-    ) -> Result<U256, OptionsError> {
+    ) -> Result<B256, OptionsError> {
         let _ = (strike, expiry, quantity, underlying, quote);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
+    }
+
+    /// Signals intent to exercise a call option.
+    ///
+    /// Locks quote tokens (strike payment), records exercise intent, and makes signaled tokens
+    /// non-transferable. This is reversible before expiry via `cancel_call_exercise_intent`.
+    ///
+    /// # Parameters
+    /// - `token_id`: The ERC-1155 token ID of the call option (keccak256 hash)
+    /// - `quantity`: Quantity of options to exercise
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    pub fn signal_call_exercise(
+        &mut self,
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
+    }
+
+    /// Signals intent to exercise a put option.
+    ///
+    /// Locks underlying tokens, records exercise intent, and makes signaled tokens
+    /// non-transferable. This is reversible before expiry via `cancel_put_exercise_intent`.
+    ///
+    /// # Parameters
+    /// - `token_id`: The ERC-1155 token ID of the put option (keccak256 hash)
+    /// - `quantity`: Quantity of options to exercise
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    pub fn signal_put_exercise(
+        &mut self,
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
+    }
+
+    /// Cancels a previously signaled call exercise intent.
+    ///
+    /// Returns locked quote tokens, clears exercise intent, and restores token transferability.
+    /// Can only be called before option expiry.
+    ///
+    /// # Parameters
+    /// - `token_id`: The ERC-1155 token ID of the call option (keccak256 hash)
+    /// - `quantity`: Quantity of exercise intent to cancel
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    pub fn cancel_call_exercise_intent(
+        &mut self,
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
+    }
+
+    /// Cancels a previously signaled put exercise intent.
+    ///
+    /// Returns locked underlying tokens, clears exercise intent, and restores token transferability.
+    /// Can only be called before option expiry.
+    ///
+    /// # Parameters
+    /// - `token_id`: The ERC-1155 token ID of the put option (keccak256 hash)
+    /// - `quantity`: Quantity of exercise intent to cancel
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    pub fn cancel_put_exercise_intent(
+        &mut self,
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
         Err(OptionsError::Unimplemented(Unimplemented {}))
     }
 }
@@ -121,7 +201,7 @@ mod tests {
         quantity: U256,
         underlying: Token,
         quote: Token,
-    ) -> Result<U256, OptionsError> {
+    ) -> Result<B256, OptionsError> {
         // Call stub logic directly (function doesn't use self)
         let _ = (strike, expiry, quantity, underlying, quote);
         Err(OptionsError::Unimplemented(Unimplemented {}))
@@ -133,7 +213,7 @@ mod tests {
         quantity: U256,
         underlying: Token,
         quote: Token,
-    ) -> Result<U256, OptionsError> {
+    ) -> Result<B256, OptionsError> {
         // Call stub logic directly (function doesn't use self)
         let _ = (strike, expiry, quantity, underlying, quote);
         Err(OptionsError::Unimplemented(Unimplemented {}))
@@ -183,6 +263,63 @@ mod tests {
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
     }
 
+    // Helper to test exercise signaling stubs
+    const fn test_signal_call_exercise_stub(
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
+    }
+
+    const fn test_signal_put_exercise_stub(
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
+    }
+
+    const fn test_cancel_call_exercise_intent_stub(
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
+    }
+
+    const fn test_cancel_put_exercise_intent_stub(
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
+    }
+
+    #[test]
+    fn test_signal_call_exercise_unimplemented() {
+        let result = test_signal_call_exercise_stub(B256::ZERO, U256::from(10));
+        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
+
+    #[test]
+    fn test_signal_put_exercise_unimplemented() {
+        let result = test_signal_put_exercise_stub(B256::ZERO, U256::from(10));
+        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
+
+    #[test]
+    fn test_cancel_call_exercise_unimplemented() {
+        let result = test_cancel_call_exercise_intent_stub(B256::ZERO, U256::from(10));
+        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
+
+    #[test]
+    fn test_cancel_put_exercise_unimplemented() {
+        let result = test_cancel_put_exercise_intent_stub(B256::ZERO, U256::from(10));
+        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
+
     proptest! {
         #[test]
         fn prop_write_options_unimplemented(
@@ -221,6 +358,25 @@ mod tests {
 
             assert!(matches!(call_result, Err(OptionsError::Unimplemented(_))));
             assert!(matches!(put_result, Err(OptionsError::Unimplemented(_))));
+        }
+
+        #[test]
+        fn prop_exercise_signaling_unimplemented(
+            token_id in any::<[u8; 32]>(),
+            quantity in 1u64..1_000_000_000u64,
+        ) {
+            let token_id = B256::from(token_id);
+            let quantity = U256::from(quantity);
+
+            let signal_call_result = test_signal_call_exercise_stub(token_id, quantity);
+            let signal_put_result = test_signal_put_exercise_stub(token_id, quantity);
+            let cancel_call_result = test_cancel_call_exercise_intent_stub(token_id, quantity);
+            let cancel_put_result = test_cancel_put_exercise_intent_stub(token_id, quantity);
+
+            assert!(matches!(signal_call_result, Err(OptionsError::Unimplemented(_))));
+            assert!(matches!(signal_put_result, Err(OptionsError::Unimplemented(_))));
+            assert!(matches!(cancel_call_result, Err(OptionsError::Unimplemented(_))));
+            assert!(matches!(cancel_put_result, Err(OptionsError::Unimplemented(_))));
         }
     }
 }

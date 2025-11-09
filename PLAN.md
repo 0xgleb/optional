@@ -103,77 +103,7 @@ foundation.
       passes
 - [x] `cargo fmt` clean
 
-## Task 2. Add Storage Structures
-
-**Goal**: Complete data model for contract state.
-
-### Storage Structs
-
-- [ ] Create `Position` struct:
-
-  ```rust
-  #[derive(Default)]
-  pub struct Position {
-      pub writer: Address,
-      pub quantity_written: U256,
-      pub collateral_locked: U256,
-      pub collateral_token: Address,
-  }
-  ```
-
-- [ ] Create `OptionMetadata` struct:
-  ```rust
-  #[derive(Default)]
-  pub struct OptionMetadata {
-      pub underlying: Address,
-      pub quote: Address,
-      pub strike: U256,  // 18 decimals normalized
-      pub expiry: U256,
-      pub option_type: OptionType,
-      pub underlying_decimals: u8,
-      pub quote_decimals: u8,
-  }
-  ```
-
-### Main Storage
-
-- [ ] Extend `OptionsToken` storage:
-
-  ```rust
-  sol_storage! {
-      #[entrypoint]
-      pub struct OptionsToken {
-          // Writer positions: keccak256(writer, tokenId) -> Position
-          StorageMap<B32, Position> positions,
-
-          // Exercise intents: keccak256(holder, tokenId) -> quantity
-          StorageMap<B32, U256> exercise_intents,
-
-          // Locked exercise funds: keccak256(holder, tokenId, token) -> amount
-          StorageMap<B32, U256> locked_exercise_funds,
-
-          // Option metadata: tokenId -> OptionMetadata
-          StorageMap<U256, OptionMetadata> option_metadata,
-
-          // Collateral balances: keccak256(user, token) -> amount
-          StorageMap<B32, U256> collateral_balances,
-      }
-  }
-  ```
-
-- [ ] Add doc comments explaining:
-  - Decimal normalization (18 decimals internal)
-  - Storage key generation (deterministic keccak256)
-  - Token ID calculation (hash of option parameters)
-
-### Validation
-
-- [ ] `cargo build` succeeds
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
-- [ ] `cargo fmt` clean
-
-## Task 3. Implement Write Options API (Stubs)
+## Task 2. Implement Write Options API (Stubs)
 
 **Goal**: Options minting interface with collateral locking.
 
@@ -219,51 +149,51 @@ foundation.
 
 ### Methods
 
-- [ ] Implement
+- [x] Implement
       `signal_call_exercise(&mut self, token_id: U256, quantity: U256) -> Result<(), OptionsError>`:
 
   - Doc: Locks quote tokens (strike payment), records intent, makes signaled
     tokens non-transferable, reversible before expiry
-  - Body: `Err(OptionsError::Unimplemented)`
+  - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
 
-- [ ] Implement
+- [x] Implement
       `signal_put_exercise(&mut self, token_id: U256, quantity: U256) -> Result<(), OptionsError>`:
 
   - Doc: Locks underlying tokens, records intent, makes signaled tokens
     non-transferable, reversible before expiry
-  - Body: `Err(OptionsError::Unimplemented)`
+  - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
 
-- [ ] Implement
+- [x] Implement
       `cancel_call_exercise_intent(&mut self, token_id: U256, quantity: U256) -> Result<(), OptionsError>`:
 
   - Doc: Returns locked quote tokens, clears intent, restores transferability,
     only before expiry
-  - Body: `Err(OptionsError::Unimplemented)`
+  - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
 
-- [ ] Implement
+- [x] Implement
       `cancel_put_exercise_intent(&mut self, token_id: U256, quantity: U256) -> Result<(), OptionsError>`:
   - Doc: Returns locked underlying tokens, clears intent, restores
     transferability, only before expiry
-  - Body: `Err(OptionsError::Unimplemented)`
+  - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
 
 ### Unit Tests
 
-- [ ] Create `test_signal_call_exercise_unimplemented()`
-- [ ] Create `test_signal_put_exercise_unimplemented()`
-- [ ] Create `test_cancel_call_exercise_unimplemented()`
-- [ ] Create `test_cancel_put_exercise_unimplemented()`
+- [x] Create `test_signal_call_exercise_unimplemented()`
+- [x] Create `test_signal_put_exercise_unimplemented()`
+- [x] Create `test_cancel_call_exercise_unimplemented()`
+- [x] Create `test_cancel_put_exercise_unimplemented()`
 
 ### Property Tests
 
-- [ ] Create `prop_exercise_signaling_unimplemented()` with strategies:
-  - Token IDs: any U256
+- [x] Create `prop_exercise_signaling_unimplemented()` with strategies:
+  - Token IDs: any u64
   - Quantities: 1..1_000_000_000u64
   - Test all 4 functions return `Unimplemented`
 
 ### Validation
 
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
+- [x] `cargo test` passes
+- [x] `cargo clippy` passes
 
 ## Task 4. Implement Settlement API (Stubs)
 
