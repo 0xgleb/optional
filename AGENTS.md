@@ -793,6 +793,162 @@ pub enum OptionsError {
 
 **Rule**: Don't write code for future requirements. Add it when you need it.
 
+### CRITICAL: Type-Test Driven Development (TTDD)
+
+**For smart contracts, use TTDD methodology: Types → Tests → Implementation →
+Refine.**
+
+This is an adaptation of Test-Driven Development (TDD) that leverages Rust's
+type system to make invalid states unrepresentable BEFORE writing tests or
+implementation.
+
+**TTDD Iteration (one per task):**
+
+1. **Types**: Define/refine types, enums, structs, error variants needed for
+   THIS task
+2. **Tests**: Write tests that specify expected behavior for THIS task
+3. **Implementation**: Write minimal code to make tests pass for THIS task
+4. **Next Iteration**: Start the next task with step 1 (types), NOT step 3
+
+**Critical Rules:**
+
+- **Complete each step sequentially**: Types → Tests → Implementation, in that
+  order
+- **One iteration per task**: If planned correctly, each task = one TTDD
+  iteration
+- **Next iteration starts with types**: Don't jump straight to implementation on
+  task 2
+- **Refine types between iterations**: Update types first when starting a new
+  task
+
+**Example TTDD Flow (Task 1: "Validate option parameters"):**
+
+```rust
+// STEP 1: Types (what domain types do we need?)
+pub enum OptionType { Call, Put }
+
+pub struct OptionParams {
+    underlying: Address,
+    quote: Address,
+    strike: U256,
+    expiry: u64,
+    option_type: OptionType,
+}
+
+pub enum OptionsError {
+    // Variants added during tests/implementation as needed
+}
+
+// STEP 2: Tests (what behavior do we need? what can go wrong?)
+#[cfg(test)]
+mod tests {
+    #[motsu::test]
+    fn test_validates_zero_strike(contract: OptionsToken) {
+        let result = contract.validate_params(params_with_zero_strike());
+        assert!(matches!(result, Err(OptionsError::InvalidStrike)));
+        //                              ^--- Need InvalidStrike variant - add it now
+    }
+
+    #[motsu::test]
+    fn test_validates_zero_address(contract: OptionsToken) {
+        let result = contract.validate_params(params_with_zero_address());
+        assert!(matches!(result, Err(OptionsError::InvalidAddress)));
+        //                              ^--- Need InvalidAddress variant - add it now
+    }
+}
+
+// After writing tests, OptionsError now looks like:
+pub enum OptionsError {
+    InvalidStrike,
+    InvalidAddress,
+}
+
+// STEP 3: Implementation (make tests pass)
+impl OptionsToken {
+    fn validate_params(&self, params: &OptionParams) -> Result<(), OptionsError> {
+        if params.strike.is_zero() {
+            return Err(OptionsError::InvalidStrike);
+        }
+        if params.underlying == Address::ZERO || params.quote == Address::ZERO {
+            return Err(OptionsError::InvalidAddress);
+        }
+        Ok(())
+    }
+}
+```
+
+**Example Next Iteration (Task 2: "Calculate collateral requirements"):**
+
+```rust
+// STEP 1: Types (what NEW domain types do we need?)
+// Maybe add a CollateralAmount newtype for type safety?
+pub struct CollateralAmount(U256);
+
+// OptionsError already exists, don't add variants yet
+
+// STEP 2: Tests (what NEW behavior/failures do we need to test?)
+#[cfg(test)]
+mod tests {
+    #[motsu::test]
+    fn test_call_collateral_equals_quantity(contract: OptionsToken) {
+        let collateral = contract.calculate_call_collateral(U256::from(100));
+        assert_eq!(collateral.unwrap(), U256::from(100));
+    }
+
+    #[motsu::test]
+    fn test_collateral_overflow_returns_error(contract: OptionsToken) {
+        let result = contract.calculate_put_collateral(U256::MAX, U256::from(2));
+        assert!(matches!(result, Err(OptionsError::Overflow)));
+        //                              ^--- Need Overflow variant - add it now
+    }
+}
+
+// After writing tests, OptionsError now looks like:
+pub enum OptionsError {
+    InvalidStrike,
+    InvalidAddress,
+    Overflow,  // NEW: added when writing overflow test
+}
+
+// STEP 3: Implementation (make tests pass)
+impl OptionsToken {
+    fn calculate_call_collateral(&self, quantity: U256) -> Result<U256, OptionsError> {
+        Ok(quantity)  // Minimal: 1:1 collateral
+    }
+
+    fn calculate_put_collateral(&self, strike: U256, quantity: U256) -> Result<U256, OptionsError> {
+        strike.checked_mul(quantity).ok_or(OptionsError::Overflow)
+        //                                  ^--- Compiler might also tell us we need Overflow variant here
+    }
+}
+```
+
+**Why This Sequence Matters:**
+
+- **Types first**: Prevents writing tests/code with wrong abstractions
+- **Tests second**: Specifies behavior before implementation bias sets in
+- **Implementation third**: Guided by both type constraints and test
+  requirements
+- **Restart with types**: Each task may need new types - don't skip this step!
+
+**Anti-Pattern (DON'T DO THIS):**
+
+```rust
+// WRONG: Jumping straight to implementation on Task 2
+// without considering if new types/errors are needed
+
+// Task 1: validation (has types + tests + implementation)
+// Task 2: collateral -- SKIP STRAIGHT TO IMPLEMENTATION -- WRONG!
+impl OptionsToken {
+    fn calculate_collateral(...) -> U256 {  // WRONG: no error handling!
+        strike * quantity  // WRONG: unchecked math!
+    }
+}
+```
+
+**Rule**: Each task begins with "What types/errors do I need?" NOT "What code do
+I write?"
+
 #### Unit Tests with Motsu
 
 ```rust

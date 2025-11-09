@@ -16,7 +16,7 @@ version.
 - Settlement is physical (actual token delivery) with manual exercise
 - All collateral is 100% locked in the underlying assets (no fractional reserve)
 - ERC20 token pairs
-- European options
+- American options (exercise any time before expiry)
 
 ### Future work
 
@@ -24,7 +24,6 @@ version.
 - Automatic exercise at maturity (requires oracles)
 - Advanced order types
 - Native token support
-- American options
 
 ### Key Architectural Decisions
 
@@ -58,9 +57,10 @@ strike price
 
 ---
 
-**European Option**: An option that can only be exercised at maturity.
-
-**American Option**: An option that can be exercised at or before maturity.
+**American Option**: An option that can be exercised at any time before or at
+expiry. This PoC implements American-style exercise, allowing holders to
+exercise immediately whenever profitable. The 100% collateralization model means
+writers are always fully protected regardless of when exercise occurs.
 
 ---
 
@@ -146,133 +146,91 @@ Steps:
 
 Outcome: Order deleted, locked tokens returned
 
-#### Flow 4: Exercise Intent (Before Expiry)
+#### Flow 4: Exercise (American-Style)
 
 Actors: Option Holder
 
 Steps:
 
-1. Holder signals intent to exercise specific option tokens any time before
-   expiry
-2. Contract records holder's exercise intent
-3. Holder can change intent by canceling exercise signal before expiry
-4. At expiry, contract processes all recorded exercise intents
+1. Holder decides to exercise option tokens (any time before expiry)
+2. Holder approves ERC20 token transfer to contract:
+   - For calls: Quote tokens (strike payment)
+   - For puts: Underlying tokens
+3. Holder calls `exercise_call(tokenId, quantity)` or
+   `exercise_put(tokenId, quantity)`
+4. Contract executes immediately:
+   - Transfers holder's payment to writer
+   - Transfers writer's collateral to holder
+   - Burns holder's ERC-1155 option tokens
+   - Releases writer's position
 
 **Constraints and Edge Cases:**
 
-- **Funds must be locked when signaling:**
+- **Partial exercise:** Holder can exercise any quantity <= their balance
 
-  - Signaling exercise LOCKS the required funds immediately to prevent writer
-    griefing
-  - For **calls**: Holder's quote tokens (strike payment) locked in contract
-  - For **puts**: Holder's underlying tokens locked in contract
-  - Cannot signal without sufficient balance and approval
-  - Prevents holder from blocking writer's collateral without committing funds
+  - Example: Own 10 options, exercise 7.5, keep 2.5 active
 
-- **Partial quantities:** Holder can signal exercise for any quantity <= their
-  balance
+- **Timing:** Can exercise any time before expiry
 
-  - Example: Own 10 options, signal exercise for 7.5, keep 2.5 unexercised
-  - Intent tracking: `exercise_intents[(holder, tokenId)] = quantity`
-  - Locked funds: `locked_exercise_funds[(holder, tokenId, token)] = amount`
+  - Before expiry: Full exercise available
+  - At/after expiry: Exercise disabled, options expire worthless
 
-- **Transfer restrictions after signaling:**
+- **Requirements:**
 
-  - Option tokens with exercise intent signaled become NON-TRANSFERABLE
-  - ERC-1155 transfer blocked for signaled quantity
-  - Holder must cancel exercise intent first to regain transferability
-  - Remaining unsignaled tokens stay fully transferable
-  - Prevents split between token ownership and exercise rights/locked funds
+  - Holder must have sufficient option token balance
+  - Holder must have approved sufficient payment tokens
+  - Holder must have sufficient payment token balance
+  - Transaction must occur before expiry timestamp
 
-- **Signal deadline:**
+- **No cancellation:** Exercise is immediate and irreversible
 
-  - Can signal any time before expiry block timestamp
-  - Signals in same block as expiry are valid
-  - No minimum advance notice required
+  - Tokens exchanged atomically in single transaction
+  - No intermediate state
 
-- **Cancellation:**
+- **Multiple writers:** If option has multiple writers:
+  - Exercise proportionally reduces all writers' positions (FIFO or pro-rata)
+  - Payment distributed to writers accordingly
+  - Implementation detail TBD
 
-  - Call `cancelExerciseIntent(tokenId, quantity)` before expiry
-  - Returns locked funds to holder
-  - Clears exercise intent
-  - No penalty for cancellation
-  - Cannot cancel after expiry
+Outcome: Immediate settlement, tokens exchanged, option tokens burned
 
-- **At expiry:**
-  - All signaled exercises execute atomically
-  - Locked funds from holder swap with writer's collateral
-  - No approval checks needed (funds already locked)
-  - No failure cases (deterministic settlement)
+#### Flow 5: Collateral Withdrawal After Expiry
 
-Outcome: Exercise intent recorded, reversible until expiry
+Actors: Option Writer
 
-#### Flow 5: Settlement at Expiry
-
-Actors: Option Holder, Option Writer, Anyone (for finalization)
-
-Automatic Processing at Expiry
-
-- All options with exercise intent: execute automatically
-- All options without exercise intent: collateral unlocked for writer
-
-##### Call Exercise (automatic if signaled)
+After expiry, any remaining unexercised options expire worthless. Writers can
+reclaim their locked collateral for these expired positions.
 
 Steps:
 
-1. Contract transfers quote ERC20 (strike amount): Holder to Writer
-2. Contract transfers underlying ERC20: Locked collateral to Holder
-3. ERC-1155 option tokens burned from holder
+1. Time passes beyond expiry timestamp
+2. Writer calls `withdraw_expired_collateral(tokenId)` or
+   `withdraw_expired_collateral(tokenId, quantity)`
+3. Contract verifies:
+   - Current time > expiry timestamp
+   - Writer has a position with locked collateral for this token
+4. Contract transfers collateral back to writer:
+   - For calls: Returns underlying tokens
+   - For puts: Returns quote tokens (strike amount)
+5. Contract reduces/closes writer's position
 
-##### Put Exercise (automatic if signaled)
+**Constraints:**
 
-Steps:
+- **Only after expiry:** Cannot withdraw while options are still active
+- **Partial withdrawal:** Writer can withdraw collateral for any quantity <=
+  their unexercised position
+- **Permissionless:** Anyone can call on behalf of writer (collateral goes to
+  original writer)
+- **No time limit:** Collateral remains available indefinitely after expiry
 
-1. Contract transfers underlying ERC20: Holder to Writer
-2. Contract transfers quote ERC20 (strike amount): Locked collateral to Holder
-3. ERC-1155 option tokens burned from holder
+**Why needed:**
 
-##### Non-Exercise (automatic if not signaled)
+- With American options, holders exercise immediately when profitable
+- Any options not exercised before expiry are out-of-the-money
+- Writers deserve to reclaim this "unexercised" collateral
+- No automatic processing - writers claim when convenient (low gas environment)
 
-Steps:
-
-1. Contract returns full collateral ERC20 to writer
-2. ERC-1155 option tokens burned from holder
-
-##### Finalization
-
-Settlement processing can be triggered by anyone after expiry:
-
-**Triggering mechanism:**
-
-- Call `finalizeExpiry(tokenId)` or `finalizeExpiry(tokenId, holderAddress)`
-  after expiry
-- Contract executes settlements based on recorded exercise intents
-- Can process individual holder or batch multiple holders in one tx
-
-**Settlement Incentive Mechanism:**
-
-PoC has no explicit incentive for third-party settlement finalization:
-
-- Holders incentivized to finalize their own profitable exercises
-- Writers incentivized to reclaim collateral for non-exercised options
-- Gas cost: ~$0.03-0.05 per settlement on Arbitrum (acceptable for self-service)
-- Anyone can call finalization functions permissionlessly
-
-Future enhancement (if time permits): Small bounty mechanism
-
-- Charge 0.1% settlement fee from collateral
-- Pay to whoever triggers finalization
-- Enables profitable third-party settlement bots
-- Creates decentralized keeper network
-
-**Settlement execution:**
-
-- Since funds are locked when exercise is signaled, settlement is deterministic
-- Simply swap locked holder funds with writer's collateral
-- Burns option tokens from holder
-- Atomic settlement guarantees
-
-Outcome: Tokens exchanged per exercise intent, or collateral returned
+Outcome: Writer reclaims collateral for expired unexercised options
 
 ### Option Lifecycle
 
@@ -280,12 +238,11 @@ Outcome: Tokens exchanged per exercise intent, or collateral returned
 stateDiagram-v2
     [*] --> Written
     Written --> Trading
-    Trading --> Expired: expiry without exercise signal
-    Trading --> ExerciseSignaled: signal exercise intent
-    ExerciseSignaled --> Expired: cancel signal before expiry
-    ExerciseSignaled --> Exercised: expiry with signal
-    Expired --> [*]: collateral returned
-    Exercised --> [*]: tokens exchanged
+    Trading --> Exercised: holder exercises (any time before expiry)
+    Trading --> Expired: time passes expiry without exercise
+    Expired --> CollateralWithdrawn: writer withdraws collateral
+    Exercised --> [*]: tokens exchanged, writer position closed
+    CollateralWithdrawn --> [*]: collateral returned to writer
 ```
 
 ### Contract execution flows
@@ -350,19 +307,15 @@ sequenceDiagram
     participant UnderlyingERC20
     participant Writer
 
-    Note over Holder,OptionsToken: Before Expiry - Signal Exercise
+    Note over Holder,OptionsToken: Any time before expiry
     Holder->>QuoteERC20: approve(OptionsToken, strike_payment)
-    Holder->>OptionsToken: signalExercise(tokenId, quantity)
-    OptionsToken->>QuoteERC20: transferFrom(Holder, OptionsToken, strike_payment)
-    OptionsToken->>OptionsToken: Lock strike payment, record exercise intent
+    Holder->>OptionsToken: exercise_call(tokenId, quantity)
 
-    Note over OptionsToken: At Expiry - Finalize Settlement
-    Holder->>OptionsToken: finalizeExpiry(tokenId)
-
-    Note over OptionsToken: Execute Call Exercise (swap locked funds)
-    OptionsToken->>QuoteERC20: transfer(Writer, strike_payment)
-    OptionsToken->>UnderlyingERC20: transfer(Holder, underlying)
+    Note over OptionsToken: Immediate atomic settlement
+    OptionsToken->>QuoteERC20: transferFrom(Holder, Writer, strike_payment)
+    OptionsToken->>UnderlyingERC20: transfer(Holder, underlying_from_collateral)
     OptionsToken->>OptionsToken: burn Holder's ERC-1155 tokens
+    OptionsToken->>OptionsToken: reduce/close Writer's position
 ```
 
 #### Put Exercise
@@ -375,22 +328,18 @@ sequenceDiagram
     participant QuoteERC20
     participant Writer
 
-    Note over Holder,OptionsToken: Before Expiry - Signal Exercise
+    Note over Holder,OptionsToken: Any time before expiry
     Holder->>UnderlyingERC20: approve(OptionsToken, underlying_amount)
-    Holder->>OptionsToken: signalExercise(tokenId, quantity)
-    OptionsToken->>UnderlyingERC20: transferFrom(Holder, OptionsToken, underlying_amount)
-    OptionsToken->>OptionsToken: Lock underlying, record exercise intent
+    Holder->>OptionsToken: exercise_put(tokenId, quantity)
 
-    Note over OptionsToken: At Expiry - Finalize Settlement
-    Holder->>OptionsToken: finalizeExpiry(tokenId)
-
-    Note over OptionsToken: Execute Put Exercise (swap locked funds)
-    OptionsToken->>UnderlyingERC20: transfer(Writer, underlying)
-    OptionsToken->>QuoteERC20: transfer(Holder, strike_payment)
+    Note over OptionsToken: Immediate atomic settlement
+    OptionsToken->>UnderlyingERC20: transferFrom(Holder, Writer, underlying)
+    OptionsToken->>QuoteERC20: transfer(Holder, strike_from_collateral)
     OptionsToken->>OptionsToken: burn Holder's ERC-1155 tokens
+    OptionsToken->>OptionsToken: reduce/close Writer's position
 ```
 
-#### Non-Exercise Settlement
+#### Collateral Withdrawal After Expiry
 
 ```mermaid
 sequenceDiagram
@@ -398,10 +347,11 @@ sequenceDiagram
     participant OptionsToken
     participant CollateralERC20
 
-    Note over OptionsToken: After Expiry (no exercise signal from holder)
-    Writer->>OptionsToken: finalizeExpiry(tokenId)
-    OptionsToken->>OptionsToken: Verify no exercise intent
+    Note over OptionsToken: After expiry (option not exercised)
+    Writer->>OptionsToken: withdraw_expired_collateral(tokenId, quantity)
+    OptionsToken->>OptionsToken: Verify time > expiry, writer has position
     OptionsToken->>CollateralERC20: transfer(Writer, collateral)
+    OptionsToken->>OptionsToken: reduce/close Writer's position
 
     Note over Writer: Collateral returned, option expired worthless
 ```
@@ -460,8 +410,8 @@ Responsibilities:
 - Mint ERC-1155 tokens when options written
 - Hold all collateral (underlying and quote ERC20s)
 - Track writer positions and locked collateral
-- Record exercise intents before expiry
-- Execute settlements at expiry (exercise or return collateral)
+- Execute immediate American exercise (any time before expiry)
+- Allow writers to withdraw collateral for expired unexercised options
 - Burn tokens on exercise
 
 Storage Structure (draft, TBC)
@@ -476,9 +426,6 @@ sol_storage! {
 
         // Writer positions: (writer, tokenId) -> Position
         mapping(bytes32 => Position) positions;
-
-        // Exercise intents: (holder, tokenId) -> quantity
-        mapping(bytes32 => uint256) exercise_intents;
 
         // Option metadata: tokenId -> OptionMetadata
         mapping(uint256 => OptionMetadata) option_metadata;
@@ -728,8 +675,8 @@ Estimated costs at 0.1 gwei gas price, $0.05 per transaction average:
 - Place limit order: approx. 100k gas (approx. $0.005)
 - Cancel order: approx. 50k gas (approx. $0.0025)
 - Market order (5 fills): approx. 250k gas (approx. $0.0125)
-- Signal exercise: approx. 30k gas (approx. $0.0015)
-- Finalize settlement: approx. 120k gas per holder (approx. $0.006)
+- Exercise (immediate settlement): approx. 150k gas (approx. $0.0075)
+- Withdraw expired collateral: approx. 80k gas (approx. $0.004)
 
 Target: Keep all operations under 300k gas to stay economically viable even at
 higher gas prices.
@@ -799,14 +746,17 @@ higher gas prices.
 **Collateral Lock Risk:**
 
 - 100% collateralization means capital inefficient vs cash-settled options
-- Writers' collateral locked until expiry
+- Writers' collateral locked until expiry (or until exercised)
 - No early exit for writers (except buying back options on market)
+- American exercise helps: holders exercise early when ITM, releasing writer
+  collateral sooner
 
-**Settlement Finalization Dependency:**
+**Post-Expiry Collateral Withdrawal:**
 
-- Relies on someone calling `finalizeExpiry()`
-- If no incentive, holders/writers must do manually
-- Small bounty mechanism recommended for production
+- Writers must manually call `withdraw_expired_collateral()` after expiry
+- No automatic return of collateral for unexercised options
+- Collateral remains safe indefinitely, but requires writer action to reclaim
+- Gas cost minimal (~$0.004 on Arbitrum), so writers incentivized to claim
 
 ## Future Work
 

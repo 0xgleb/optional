@@ -6,7 +6,13 @@ Define the complete public API for the OptionsToken contract with stub
 implementations. This establishes the custom OptionsToken methods only -
 ERC-1155 standard interface is Issue #11.
 
-**Scope**: 9 custom methods, storage structures, error types, test stubs.
+**Scope**: 5 custom methods (American-style options), storage structures, error
+types, test stubs.
+
+**American Options**: This implementation uses American-style exercise
+(immediate settlement any time before expiry) rather than European-style (signal
+then finalize). Benefits: simpler state machine, better UX, no
+signaling/cancellation complexity, more valuable product.
 
 ## Dependencies
 
@@ -143,97 +149,69 @@ foundation.
 - [x] `cargo clippy` passes
 - [x] `cargo build --target wasm32-unknown-unknown --release` succeeds
 
-## Task 3. Implement Exercise Signaling API (Stubs)
+## Task 3. Implement Exercise API - American Style (Stubs)
 
-**Goal**: Exercise intent management with fund locking.
+**Goal**: Immediate exercise functionality (any time before expiry).
 
 ### Methods
 
-- [x] Implement
-      `signal_call_exercise(&mut self, token_id: U256, quantity: U256) -> Result<(), OptionsError>`:
+- [ ] Implement
+      `exercise_call(&mut self, token_id: B256, quantity: U256) -> Result<(), OptionsError>`:
 
-  - Doc: Locks quote tokens (strike payment), records intent, makes signaled
-    tokens non-transferable, reversible before expiry
+  - Doc: Immediate atomic settlement. Holder pays strike (quote tokens) to
+    writer, receives underlying from collateral, burns option tokens. Only
+    before expiry.
   - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
 
-- [x] Implement
-      `signal_put_exercise(&mut self, token_id: U256, quantity: U256) -> Result<(), OptionsError>`:
+- [ ] Implement
+      `exercise_put(&mut self, token_id: B256, quantity: U256) -> Result<(), OptionsError>`:
 
-  - Doc: Locks underlying tokens, records intent, makes signaled tokens
-    non-transferable, reversible before expiry
-  - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
-
-- [x] Implement
-      `cancel_call_exercise_intent(&mut self, token_id: U256, quantity: U256) -> Result<(), OptionsError>`:
-
-  - Doc: Returns locked quote tokens, clears intent, restores transferability,
-    only before expiry
-  - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
-
-- [x] Implement
-      `cancel_put_exercise_intent(&mut self, token_id: U256, quantity: U256) -> Result<(), OptionsError>`:
-  - Doc: Returns locked underlying tokens, clears intent, restores
-    transferability, only before expiry
+  - Doc: Immediate atomic settlement. Holder delivers underlying to writer,
+    receives strike (quote tokens) from collateral, burns option tokens. Only
+    before expiry.
   - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
 
 ### Unit Tests
 
-- [x] Create `test_signal_call_exercise_unimplemented()`
-- [x] Create `test_signal_put_exercise_unimplemented()`
-- [x] Create `test_cancel_call_exercise_unimplemented()`
-- [x] Create `test_cancel_put_exercise_unimplemented()`
+- [ ] Create `test_exercise_call_unimplemented()`
+- [ ] Create `test_exercise_put_unimplemented()`
 
 ### Property Tests
 
-- [x] Create `prop_exercise_signaling_unimplemented()` with strategies:
-  - Token IDs: any u64
+- [ ] Create `prop_exercise_unimplemented()` with strategies:
+  - Token IDs: any [u8; 32] (B256)
   - Quantities: 1..1_000_000_000u64
-  - Test all 4 functions return `Unimplemented`
+  - Test both functions return `Unimplemented`
 
 ### Validation
 
-- [x] `cargo test` passes
-- [x] `cargo clippy` passes
+- [ ] `cargo test` passes
+- [ ] `cargo clippy` passes
 
-## Task 4. Implement Settlement API (Stubs)
+## Task 4. Implement Collateral Withdrawal API (Stubs)
 
-**Goal**: Expiry finalization and settlement.
+**Goal**: Writers reclaim collateral for expired unexercised options.
 
 ### Methods
 
 - [ ] Implement
-      `finalize_call_expiry(&mut self, token_id: U256, holder_address: Address) -> Result<(), OptionsError>`:
+      `withdraw_expired_collateral(&mut self, token_id: B256, quantity: U256) -> Result<(), OptionsError>`:
 
-  - Doc: If exercised: quote → writer, underlying → holder. If not: underlying →
-    writer. Burns tokens. Only after expiry.
-  - Body: `Err(OptionsError::Unimplemented)`
-
-- [ ] Implement
-      `finalize_put_expiry(&mut self, token_id: U256, holder_address: Address) -> Result<(), OptionsError>`:
-
-  - Doc: If exercised: underlying → writer, quote → holder. If not: quote →
-    writer. Burns tokens. Only after expiry.
-  - Body: `Err(OptionsError::Unimplemented)`
-
-- [ ] Implement
-      `finalize_batch_expiry(&mut self, token_id: U256, holder_addresses: Vec<Address>) -> Result<(), OptionsError>`:
-  - Doc: Processes multiple holders atomically for gas efficiency. Same
-    settlement logic per holder.
-  - Body: `Err(OptionsError::Unimplemented)`
+  - Doc: Writers reclaim collateral for unexercised options after expiry.
+    Returns underlying for calls, quote for puts. Reduces/closes writer
+    position. Only after expiry.
+  - Body: `Err(OptionsError::Unimplemented(Unimplemented {}))`
 
 ### Unit Tests
 
-- [ ] Create `test_finalize_call_expiry_unimplemented()`
-- [ ] Create `test_finalize_put_expiry_unimplemented()`
-- [ ] Create `test_finalize_batch_expiry_unimplemented()`
+- [ ] Create `test_withdraw_expired_collateral_unimplemented()`
 
 ### Property Tests
 
-- [ ] Create `prop_finalize_expiry_unimplemented()` with strategies:
-  - Token IDs: any U256
-  - Addresses: non-zero (1..=u160::MAX)
-  - Address vectors: 1..10 addresses
-  - Test all 3 functions return `Unimplemented`
+- [ ] Create `prop_withdraw_expired_collateral_unimplemented()` with strategies:
+  - Token IDs: any [u8; 32] (B256)
+  - Quantities: 1..1_000_000_000u64
+  - Test function returns `Unimplemented`
 
 ### Validation
 
@@ -259,11 +237,11 @@ foundation.
 
 ### Validation
 
-- [ ] All tests pass ✓
-- [ ] No clippy warnings ✓
-- [ ] WASM builds successfully ✓
-- [ ] ABI exports correctly ✓
-- [ ] Contract ready for testnet deployment ✓
+- [ ] All tests pass
+- [ ] No clippy warnings
+- [ ] WASM builds successfully
+- [ ] ABI exports correctly
+- [ ] Contract ready for testnet deployment
 
 ## Design Decisions
 
@@ -300,9 +278,10 @@ token_id = keccak256(abi.encodePacked(
 Deterministic keys for O(1) lookups:
 
 - Position: `keccak256(writer, tokenId)`
-- Exercise intent: `keccak256(holder, tokenId)`
-- Locked funds: `keccak256(holder, tokenId, token)`
 - Collateral: `keccak256(user, token)`
+
+Note: With American options, no need for exercise intent or locked funds
+storage - exercise is immediate.
 
 ### Separate Call/Put Functions
 
@@ -327,13 +306,13 @@ Rationale:
 
 ## Success Criteria
 
-- Contract compiles at every task checkpoint ✓
-- Tests pass after each feature addition ✓
-- Clippy clean throughout development ✓
-- WASM builds successfully ✓
-- ABI exports correctly with all 9 custom functions ✓
-- All functions return `Err(OptionsError::Unimplemented)` ✓
-- Full documentation on all public functions ✓
-- Complete test coverage for all stubs ✓
-- Storage structures defined and documented ✓
-- Ready for testnet deployment ✓
+- Contract compiles at every task checkpoint
+- Tests pass after each feature addition
+- Clippy clean throughout development
+- WASM builds successfully
+- ABI exports correctly with all 5 custom functions
+- All functions return `Err(OptionsError::Unimplemented)`
+- Full documentation on all public functions
+- Complete test coverage for all stubs
+- Storage structures defined and documented
+- Ready for testnet deployment
