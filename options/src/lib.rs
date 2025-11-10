@@ -1,112 +1,239 @@
-//!
-//! Stylus Hello World
-//!
-//! The following contract implements the Counter example from Foundry.
-//!
-//! ```solidity
-//! contract Counter {
-//!     uint256 public number;
-//!     function setNumber(uint256 newNumber) public {
-//!         number = newNumber;
-//!     }
-//!     function increment() public {
-//!         number++;
-//!     }
-//! }
-//! ```
-//!
-//! The program is ABI-equivalent with Solidity, which means you can call it from both Solidity and Rust.
-//! To do this, run `cargo stylus export-abi`.
-//!
-//! Note: this code is a template-only and has not been audited.
-//!
-// Allow `cargo stylus export-abi` to generate a main function.
 #![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
 #![cfg_attr(not(any(test, feature = "export-abi")), no_std)]
-
-#[macro_use]
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
+use alloy_primitives::{B256, U256};
+use alloy_sol_types::sol;
 
-/// Import items from the SDK. The prelude contains common traits and macros.
-use stylus_sdk::{alloy_primitives::U256, prelude::*};
+use stylus_sdk::prelude::*;
 
-// Define some persistent storage using the Solidity ABI.
-// `Counter` will be the entrypoint.
-sol_storage! {
-    #[entrypoint]
-    pub struct Counter {
-        uint256 number;
+sol! {
+    /// Represents a token with its address and decimal precision.
+    #[derive(Copy)]
+    struct Token {
+        address address;
+        uint8 decimals;
     }
 }
 
-/// Declare that `Counter` is a contract with the following external methods.
+// Implement AbiType for Token to make it usable in #[public] functions
+impl stylus_sdk::abi::AbiType for Token {
+    type SolType = Self;
+    const ABI: stylus_sdk::abi::ConstString = stylus_sdk::abi::ConstString::new("(address,uint8)");
+}
+
+/// Represents the type of option contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OptionType {
+    /// Call option: Right to BUY underlying at strike price.
+    #[default]
+    Call,
+    /// Put option: Right to SELL underlying at strike price.
+    Put,
+}
+
+sol! {
+    /// Errors that can occur in the Options contract.
+    #[derive(Debug)]
+    error Unimplemented();
+}
+
+#[derive(SolidityError, Debug)]
+pub enum OptionsError {
+    /// Stub implementation placeholder - function not yet implemented.
+    Unimplemented(Unimplemented),
+}
+
+sol_storage! {
+    #[entrypoint]
+    pub struct Options {
+        bool placeholder;
+    }
+}
+
 #[public]
-impl Counter {
-    /// Gets the number from storage.
-    #[must_use]
-    pub fn number(&self) -> U256 {
-        self.number.get()
+impl Options {
+    /// Writes a call option by locking underlying tokens as collateral (1:1).
+    ///
+    /// Mints ERC-1155 tokens representing the call option and returns a deterministic token ID
+    /// based on the option parameters (keccak256 hash).
+    ///
+    /// # Parameters
+    /// - `strike`: Strike price (18 decimals normalized)
+    /// - `expiry`: Expiration timestamp
+    /// - `quantity`: Quantity of options to write
+    /// - `underlying`: Underlying token (address and decimals)
+    /// - `quote`: Quote token (address and decimals)
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    pub fn write_call_option(
+        &mut self,
+        strike: U256,
+        expiry: U256,
+        quantity: U256,
+        underlying: Token,
+        quote: Token,
+    ) -> Result<B256, OptionsError> {
+        let _ = (strike, expiry, quantity, underlying, quote);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
     }
 
-    /// Sets a number in storage to a user-specified value.
-    pub fn set_number(&mut self, new_number: U256) {
-        self.number.set(new_number);
+    /// Writes a put option by locking quote tokens as collateral (strike * quantity).
+    ///
+    /// Mints ERC-1155 tokens representing the put option and returns a deterministic token ID
+    /// based on the option parameters (keccak256 hash).
+    ///
+    /// # Parameters
+    /// - `strike`: Strike price (18 decimals normalized)
+    /// - `expiry`: Expiration timestamp
+    /// - `quantity`: Quantity of options to write
+    /// - `underlying`: Underlying token (address and decimals)
+    /// - `quote`: Quote token (address and decimals)
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    pub fn write_put_option(
+        &mut self,
+        strike: U256,
+        expiry: U256,
+        quantity: U256,
+        underlying: Token,
+        quote: Token,
+    ) -> Result<B256, OptionsError> {
+        let _ = (strike, expiry, quantity, underlying, quote);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
     }
 
-    /// Sets a number in storage to a user-specified value.
-    pub fn mul_number(&mut self, new_number: U256) {
-        self.number.set(new_number * self.number.get());
+    /// Exercises a call option
+    ///
+    /// Immediate atomic settlement: holder pays strike (quote tokens) to writer,
+    /// receives underlying tokens from collateral, burns option tokens.
+    /// Can only be called before option expiry.
+    ///
+    /// # Parameters
+    /// - `token_id`: The ERC-1155 token ID of the call option (keccak256 hash)
+    /// - `quantity`: Quantity of options to exercise
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    pub fn exercise_call(&mut self, token_id: B256, quantity: U256) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
     }
 
-    /// Sets a number in storage to a user-specified value.
-    pub fn add_number(&mut self, new_number: U256) {
-        self.number.set(new_number + self.number.get());
+    /// Exercises a put option
+    ///
+    /// Immediate atomic settlement: holder delivers underlying tokens to writer,
+    /// receives strike (quote tokens) from collateral, burns option tokens.
+    /// Can only be called before option expiry.
+    ///
+    /// # Parameters
+    /// - `token_id`: The ERC-1155 token ID of the put option (keccak256 hash)
+    /// - `quantity`: Quantity of options to exercise
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    pub fn exercise_put(&mut self, token_id: B256, quantity: U256) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
     }
 
-    /// Increments `number` and updates its value in storage.
-    pub fn increment(&mut self) {
-        let number = self.number.get();
-        self.set_number(number + U256::from(1));
-    }
-
-    /// Adds the wei value from msg_value to the number in storage.
-    #[payable]
-    pub fn add_from_msg_value(&mut self) {
-        let number = self.number.get();
-        self.set_number(number + self.vm().msg_value());
+    /// Withdraws collateral for expired unexercised options.
+    ///
+    /// Writers can reclaim their locked collateral after option expiry.
+    /// Returns underlying tokens for calls, quote tokens for puts.
+    /// Reduces or closes the writer's position. Only callable after expiry.
+    ///
+    /// # Parameters
+    /// - `token_id`: The ERC-1155 token ID of the option (keccak256 hash)
+    /// - `quantity`: Quantity of collateral to withdraw
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    pub fn withdraw_expired_collateral(
+        &mut self,
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let _ = (token_id, quantity);
+        Err(OptionsError::Unimplemented(Unimplemented {}))
     }
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
+    use alloy_primitives::Address;
+    use motsu::prelude::*;
+
     use super::*;
 
-    #[test]
-    fn test_counter() {
-        use stylus_sdk::testing::*;
-        let vm = TestVM::default();
-        let mut contract = Counter::from(&vm);
+    #[motsu::test]
+    fn test_write_call_option_returns_unimplemented(contract: Contract<Options>, alice: Address) {
+        let underlying = Token {
+            address: Address::ZERO,
+            decimals: 18,
+        };
+        let quote = Token {
+            address: Address::ZERO,
+            decimals: 6,
+        };
 
-        assert_eq!(U256::ZERO, contract.number());
+        let result = contract.sender(alice).write_call_option(
+            U256::from(1000),
+            U256::from(1_234_567_890),
+            U256::from(100),
+            underlying,
+            quote,
+        );
 
-        contract.increment();
-        assert_eq!(U256::from(1), contract.number());
+        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
 
-        contract.add_number(U256::from(3));
-        assert_eq!(U256::from(4), contract.number());
+    #[motsu::test]
+    fn test_write_put_option_returns_unimplemented(contract: Contract<Options>, alice: Address) {
+        let underlying = Token {
+            address: Address::ZERO,
+            decimals: 18,
+        };
+        let quote = Token {
+            address: Address::ZERO,
+            decimals: 6,
+        };
 
-        contract.mul_number(U256::from(2));
-        assert_eq!(U256::from(8), contract.number());
+        let result = contract.sender(alice).write_put_option(
+            U256::from(1000),
+            U256::from(1_234_567_890),
+            U256::from(100),
+            underlying,
+            quote,
+        );
 
-        contract.set_number(U256::from(100));
-        assert_eq!(U256::from(100), contract.number());
+        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
 
-        // Override the msg value for future contract method invocations.
-        vm.set_value(U256::from(2));
+    #[motsu::test]
+    fn test_exercise_call_unimplemented(contract: Contract<Options>, alice: Address) {
+        let result = contract
+            .sender(alice)
+            .exercise_call(B256::ZERO, U256::from(10));
+        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
 
-        contract.add_from_msg_value();
-        assert_eq!(U256::from(102), contract.number());
+    #[motsu::test]
+    fn test_exercise_put_unimplemented(contract: Contract<Options>, alice: Address) {
+        let result = contract
+            .sender(alice)
+            .exercise_put(B256::ZERO, U256::from(10));
+        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
+
+    #[motsu::test]
+    fn test_withdraw_expired_collateral_unimplemented(contract: Contract<Options>, alice: Address) {
+        let result = contract
+            .sender(alice)
+            .withdraw_expired_collateral(B256::ZERO, U256::from(10));
+        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
     }
 }

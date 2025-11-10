@@ -63,7 +63,14 @@
 
           # Rust
           taplo.enable = true;
-          rustfmt.enable = true;
+          rustfmt = {
+            enable = true;
+            entry = pkgs.lib.mkForce "${pkgs.writeShellScript "rustfmt-multi" ''
+              set -euxo pipefail
+              cd options && ${rust-toolchain}/bin/cargo fmt
+              cd ../clob && ${rust-toolchain}/bin/cargo fmt
+            ''}";
+          };
 
           # TypeScript
           eslint.enable = true;
