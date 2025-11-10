@@ -3,7 +3,7 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::sol;
 
 use stylus_sdk::prelude::*;
@@ -33,6 +33,21 @@ pub enum OptionType {
     Put,
 }
 
+impl OptionType {
+    /// Converts option type to u8 for encoding.
+    ///
+    /// # Returns
+    /// - `0` for Call
+    /// - `1` for Put
+    #[must_use]
+    pub const fn to_u8(self) -> u8 {
+        match self {
+            Self::Call => 0,
+            Self::Put => 1,
+        }
+    }
+}
+
 sol! {
     /// Errors that can occur in the Options contract.
     #[derive(Debug)]
@@ -50,6 +65,40 @@ sol_storage! {
     pub struct Options {
         bool placeholder;
     }
+}
+
+/// Generates a deterministic token ID for an option series.
+///
+/// Token ID is computed as `keccak256(underlying, quote, strike, expiry, option_type)`.
+/// All writers of the same option parameters share the same token ID, enabling
+/// fungibility and secondary market trading.
+///
+/// # Parameters
+/// - `underlying`: Address of the underlying token
+/// - `quote`: Address of the quote token
+/// - `strike`: Strike price (18 decimals normalized)
+/// - `expiry`: Expiration timestamp
+/// - `option_type`: Call or Put
+///
+/// # Returns
+/// Deterministic `B256` hash as token ID
+pub(crate) fn generate_token_id(
+    underlying: Address,
+    quote: Address,
+    strike: U256,
+    expiry: U256,
+    option_type: OptionType,
+) -> B256 {
+    let encoded = [
+        underlying.as_slice(),
+        quote.as_slice(),
+        strike.to_be_bytes::<32>().as_slice(),
+        expiry.to_be_bytes::<32>().as_slice(),
+        &[option_type.to_u8()],
+    ]
+    .concat();
+
+    keccak256(encoded)
 }
 
 #[public]
@@ -168,6 +217,124 @@ mod tests {
     use motsu::prelude::*;
 
     use super::*;
+
+    // Token ID Generation Tests
+    #[test]
+    fn test_generate_token_id_same_parameters_identical() {
+        let underlying = Address::from([0x11; 20]);
+        let quote = Address::from([0x22; 20]);
+        let strike = U256::from(100_000);
+        let expiry = U256::from(1_700_000_000);
+        let option_type = OptionType::Call;
+
+        let token_id_1 = generate_token_id(underlying, quote, strike, expiry, option_type);
+        let token_id_2 = generate_token_id(underlying, quote, strike, expiry, option_type);
+
+        assert_eq!(token_id_1, token_id_2);
+    }
+
+    #[test]
+    fn test_generate_token_id_different_strikes() {
+        let underlying = Address::from([0x11; 20]);
+        let quote = Address::from([0x22; 20]);
+        let expiry = U256::from(1_700_000_000);
+        let option_type = OptionType::Call;
+
+        let token_id_1 =
+            generate_token_id(underlying, quote, U256::from(100_000), expiry, option_type);
+        let token_id_2 =
+            generate_token_id(underlying, quote, U256::from(200_000), expiry, option_type);
+
+        assert_ne!(token_id_1, token_id_2);
+    }
+
+    #[test]
+    fn test_generate_token_id_different_expiries() {
+        let underlying = Address::from([0x11; 20]);
+        let quote = Address::from([0x22; 20]);
+        let strike = U256::from(100_000);
+        let option_type = OptionType::Call;
+
+        let token_id_1 = generate_token_id(
+            underlying,
+            quote,
+            strike,
+            U256::from(1_700_000_000),
+            option_type,
+        );
+        let token_id_2 = generate_token_id(
+            underlying,
+            quote,
+            strike,
+            U256::from(1_800_000_000),
+            option_type,
+        );
+
+        assert_ne!(token_id_1, token_id_2);
+    }
+
+    #[test]
+    fn test_generate_token_id_different_option_types() {
+        let underlying = Address::from([0x11; 20]);
+        let quote = Address::from([0x22; 20]);
+        let strike = U256::from(100_000);
+        let expiry = U256::from(1_700_000_000);
+
+        let token_id_call = generate_token_id(underlying, quote, strike, expiry, OptionType::Call);
+        let token_id_put = generate_token_id(underlying, quote, strike, expiry, OptionType::Put);
+
+        assert_ne!(token_id_call, token_id_put);
+    }
+
+    #[test]
+    fn test_generate_token_id_different_underlying() {
+        let quote = Address::from([0x22; 20]);
+        let strike = U256::from(100_000);
+        let expiry = U256::from(1_700_000_000);
+        let option_type = OptionType::Call;
+
+        let token_id_1 = generate_token_id(
+            Address::from([0x11; 20]),
+            quote,
+            strike,
+            expiry,
+            option_type,
+        );
+        let token_id_2 = generate_token_id(
+            Address::from([0x33; 20]),
+            quote,
+            strike,
+            expiry,
+            option_type,
+        );
+
+        assert_ne!(token_id_1, token_id_2);
+    }
+
+    #[test]
+    fn test_generate_token_id_different_quote() {
+        let underlying = Address::from([0x11; 20]);
+        let strike = U256::from(100_000);
+        let expiry = U256::from(1_700_000_000);
+        let option_type = OptionType::Call;
+
+        let token_id_1 = generate_token_id(
+            underlying,
+            Address::from([0x22; 20]),
+            strike,
+            expiry,
+            option_type,
+        );
+        let token_id_2 = generate_token_id(
+            underlying,
+            Address::from([0x33; 20]),
+            strike,
+            expiry,
+            option_type,
+        );
+
+        assert_ne!(token_id_1, token_id_2);
+    }
 
     #[motsu::test]
     fn test_write_call_option_returns_unimplemented(contract: Contract<Options>, alice: Address) {

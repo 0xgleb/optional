@@ -10,34 +10,34 @@ Generate deterministic token IDs for option series.
 
 **TTDD Step 1 - Types:**
 
-- [ ] Add `OptionType::to_u8()` helper method (Call=0, Put=1)
-- [ ] Error variants will be added during test writing if needed
+- [x] Add `OptionType::to_u8()` helper method (Call=0, Put=1)
+- [x] Error variants will be added during test writing if needed
 
 **TTDD Step 2 - Tests:**
 
-- [ ] Test: Same parameters produce identical token ID
-- [ ] Test: Different strikes produce different token IDs
-- [ ] Test: Different expiries produce different token IDs
-- [ ] Test: Different option types (Call vs Put) produce different token IDs
-- [ ] Test: Different underlying addresses produce different token IDs
-- [ ] Test: Different quote addresses produce different token IDs
-- [ ] Property test: Token ID determinism - calling function N times with same
+- [x] Test: Same parameters produce identical token ID
+- [x] Test: Different strikes produce different token IDs
+- [x] Test: Different expiries produce different token IDs
+- [x] Test: Different option types (Call vs Put) produce different token IDs
+- [x] Test: Different underlying addresses produce different token IDs
+- [x] Test: Different quote addresses produce different token IDs
+- [x] Property test: Token ID determinism - calling function N times with same
       inputs produces same output
 
 **TTDD Step 3 - Implementation:**
 
-- [ ] Add
+- [x] Add
       `generate_token_id(underlying: Address, quote: Address, strike: U256, expiry: U256, option_type: OptionType) -> B256`
       function
-- [ ] Use `alloy_sol_types::SolValue::abi_encode_packed()` for encoding
-- [ ] Use `alloy_primitives::keccak256()` for hashing
-- [ ] Return `B256` hash
+- [x] Concatenate byte slices for encoding
+- [x] Use `alloy_primitives::keccak256()` for hashing
+- [x] Return `B256` hash
 
 **Validation:**
 
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
-- [ ] `cargo fmt --check` passes
+- [x] `cargo test` passes
+- [x] `cargo clippy` passes (expected dead_code warning until Task 9)
+- [x] `cargo fmt --check` passes
 
 **Design Decision**: Token IDs are globally unique per option series. All
 writers sharing the same parameters get the same token ID, enabling fungibility
