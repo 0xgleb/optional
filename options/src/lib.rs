@@ -52,12 +52,20 @@ sol! {
     /// Errors that can occur in the Options contract.
     #[derive(Debug)]
     error Unimplemented();
+    #[derive(Debug)]
+    error InvalidDecimals(uint8 decimals);
+    #[derive(Debug)]
+    error NormalizationOverflow();
 }
 
 #[derive(SolidityError, Debug)]
 pub enum OptionsError {
     /// Stub implementation placeholder - function not yet implemented.
     Unimplemented(Unimplemented),
+    /// Token decimals exceed maximum of 18.
+    InvalidDecimals(InvalidDecimals),
+    /// Arithmetic overflow during normalization.
+    NormalizationOverflow(NormalizationOverflow),
 }
 
 sol_storage! {
@@ -99,6 +107,70 @@ pub(crate) fn generate_token_id(
     .concat();
 
     keccak256(encoded)
+}
+
+/// Normalizes an amount from native token decimals to 18 decimals.
+///
+/// All internal calculations use 18-decimal precision. This function converts
+/// amounts from their native decimal representation to the internal 18-decimal format.
+///
+/// # Parameters
+/// - `amount`: Amount in native decimals
+/// - `from_decimals`: Number of decimals in the native token (must be <= 18)
+///
+/// # Returns
+/// Amount normalized to 18 decimals
+///
+/// # Errors
+/// - `InvalidDecimals`: If `from_decimals > 18`
+/// - `NormalizationOverflow`: If multiplication would overflow U256
+pub(crate) fn normalize_amount(amount: U256, from_decimals: u8) -> Result<U256, OptionsError> {
+    if from_decimals > 18 {
+        return Err(OptionsError::InvalidDecimals(InvalidDecimals {
+            decimals: from_decimals,
+        }));
+    }
+
+    let scale_exp = 18 - from_decimals;
+    let scale_factor = U256::from(10).checked_pow(U256::from(scale_exp)).ok_or(
+        OptionsError::NormalizationOverflow(NormalizationOverflow {}),
+    )?;
+
+    amount
+        .checked_mul(scale_factor)
+        .ok_or(OptionsError::NormalizationOverflow(
+            NormalizationOverflow {},
+        ))
+}
+
+/// Denormalizes an amount from 18 decimals to native token decimals.
+///
+/// Converts amounts from the internal 18-decimal representation back to
+/// native token decimals for ERC20 transfers.
+///
+/// # Parameters
+/// - `amount`: Amount in 18 decimals
+/// - `to_decimals`: Number of decimals in the target token (must be <= 18)
+///
+/// # Returns
+/// Amount in native token decimals
+///
+/// # Errors
+/// - `InvalidDecimals`: If `to_decimals > 18`
+/// - `NormalizationOverflow`: If scale factor calculation would overflow
+pub(crate) fn denormalize_amount(amount: U256, to_decimals: u8) -> Result<U256, OptionsError> {
+    if to_decimals > 18 {
+        return Err(OptionsError::InvalidDecimals(InvalidDecimals {
+            decimals: to_decimals,
+        }));
+    }
+
+    let scale_exp = 18 - to_decimals;
+    let scale_factor = U256::from(10).checked_pow(U256::from(scale_exp)).ok_or(
+        OptionsError::NormalizationOverflow(NormalizationOverflow {}),
+    )?;
+
+    Ok(amount / scale_factor)
 }
 
 #[public]
@@ -217,6 +289,75 @@ mod tests {
     use motsu::prelude::*;
 
     use super::*;
+
+    // Decimal Normalization Tests
+    #[test]
+    fn test_normalize_amount_usdc_6_decimals() {
+        let amount = U256::from(1_000_000); // 1 USDC
+        let result = normalize_amount(amount, 6);
+        assert_eq!(result.unwrap(), U256::from(1_000_000_000_000_000_000u128)); // 10^18
+    }
+
+    #[test]
+    fn test_normalize_amount_wbtc_8_decimals() {
+        let amount = U256::from(100_000_000); // 1 WBTC
+        let result = normalize_amount(amount, 8);
+        assert_eq!(result.unwrap(), U256::from(1_000_000_000_000_000_000u128)); // 10^18
+    }
+
+    #[test]
+    fn test_normalize_amount_18_decimals_no_change() {
+        let amount = U256::from(1_000_000_000_000_000_000u128); // 1 ether
+        let result = normalize_amount(amount, 18);
+        assert_eq!(result.unwrap(), U256::from(1_000_000_000_000_000_000u128));
+    }
+
+    #[test]
+    fn test_normalize_amount_0_decimals() {
+        let amount = U256::from(1);
+        let result = normalize_amount(amount, 0);
+        assert_eq!(result.unwrap(), U256::from(1_000_000_000_000_000_000u128));
+    }
+
+    #[test]
+    fn test_normalize_amount_invalid_decimals_24() {
+        let amount = U256::from(1000);
+        let result = normalize_amount(amount, 24);
+        assert!(matches!(result, Err(OptionsError::InvalidDecimals(_))));
+    }
+
+    #[test]
+    fn test_normalize_amount_overflow() {
+        let result = normalize_amount(U256::MAX, 0);
+        assert!(matches!(
+            result,
+            Err(OptionsError::NormalizationOverflow(_))
+        ));
+    }
+
+    #[test]
+    fn test_denormalize_amount_round_trip_6_decimals() {
+        let original = U256::from(1_000_000); // 1 USDC
+        let normalized = normalize_amount(original, 6).unwrap();
+        let denormalized = denormalize_amount(normalized, 6).unwrap();
+        assert_eq!(denormalized, original);
+    }
+
+    #[test]
+    fn test_denormalize_amount_round_trip_8_decimals() {
+        let original = U256::from(100_000_000); // 1 WBTC
+        let normalized = normalize_amount(original, 8).unwrap();
+        let denormalized = denormalize_amount(normalized, 8).unwrap();
+        assert_eq!(denormalized, original);
+    }
+
+    #[test]
+    fn test_denormalize_amount_round_trip_18_decimals() {
+        let original = U256::from(1_000_000_000_000_000_000u128);
+        let normalized = normalize_amount(original, 18).unwrap();
+        let denormalized = denormalize_amount(normalized, 18).unwrap();
+        assert_eq!(denormalized, original);
+    }
 
     // Token ID Generation Tests
     #[test]
