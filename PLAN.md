@@ -93,42 +93,43 @@ Mock tokens for testing without external dependencies.
 
 **TTDD Step 1 - Types:**
 
-- [ ] Create `tests/mock_erc20.rs` module
-- [ ] Define `MockERC20` storage structure
-- [ ] Define `FeeOnTransferERC20` storage structure
+- [x] Create mock token types in tests module
+- [x] Define `MockERC20` structure with BTreeMap
+- [x] Define `FeeOnTransferERC20` structure with BTreeMap
 
 **TTDD Step 2 - Tests:**
 
-- [ ] Test: MockERC20 mint increases balance
-- [ ] Test: MockERC20 transfer moves tokens
-- [ ] Test: MockERC20 transferFrom with approval works
-- [ ] Test: MockERC20 transferFrom without approval fails
-- [ ] Test: MockERC20 decimals() returns configured value
-- [ ] Test: FeeOnTransferERC20 deducts 1% fee on transfer
-- [ ] Test: FeeOnTransferERC20 balanceOf shows reduced amount after transfer
+- [x] Test: MockERC20 mint increases balance
+- [x] Test: MockERC20 transfer moves tokens
+- [x] Test: MockERC20 transferFrom with approval works
+- [x] Test: MockERC20 transferFrom without approval fails
+- [x] Test: MockERC20 decimals() returns configured value
+- [x] Test: FeeOnTransferERC20 deducts 1% fee on transfer
+- [x] Test: FeeOnTransferERC20 balanceOf shows reduced amount after transfer
 
 **TTDD Step 3 - Implementation:**
 
-- [ ] Implement `MockERC20` with:
-  - `StorageMap<Address, U256> balances`
-  - `StorageMap<(Address, Address), U256> allowances`
-  - `StorageU8 decimals`
+- [x] Implement `MockERC20` with:
+  - `BTreeMap<Address, U256> balances`
+  - `BTreeMap<Address, BTreeMap<Address, U256>> allowances`
+  - `u8 decimals_value`
   - `mint(to: Address, amount: U256)` - test helper
-  - `transfer(to: Address, amount: U256) -> bool`
-  - `transferFrom(from: Address, to: Address, amount: U256) -> bool`
-  - `approve(spender: Address, amount: U256) -> bool`
-  - `balanceOf(account: Address) -> U256`
-  - `decimals() -> u8`
-- [ ] Implement `FeeOnTransferERC20`:
-  - Extend MockERC20
-  - Override `transferFrom` to transfer `amount * 99 / 100`
-- [ ] Mark module with `#[cfg(test)]`
+  - `transfer(from: Address, to: Address, amount: U256) -> bool`
+  - `transferFrom(spender, from: Address, to: Address, amount: U256) -> bool`
+  - `approve(owner, spender: Address, amount: U256) -> bool`
+  - `balance_of(account: Address) -> U256`
+  - `decimals() -> u8` and `set_decimals(u8)`
+- [x] Implement `FeeOnTransferERC20`:
+  - Simplified version with only needed methods
+  - `transfer` deducts 1% fee (amount \* 99 / 100)
+- [x] Mark types with `#[cfg(test)]`
 
 **Validation:**
 
-- [ ] `cargo test` passes for mock token tests
-- [ ] `cargo clippy` passes
-- [ ] `cargo fmt --check` passes
+- [x] `cargo test` passes (27 tests)
+- [x] `cargo clippy` passes (expected dead_code warnings for Task 1-2 functions
+      until Task 9)
+- [x] `cargo fmt` passes
 
 **Design Decision**: Mock tokens enable isolated testing. FeeOnTransferERC20
 validates our detection logic. Mocks are simpler and faster than deploying real
@@ -140,34 +141,34 @@ Track option token balances and total supply.
 
 **TTDD Step 1 - Types:**
 
-- [ ] Add to `Options` storage struct:
+- [x] Add to `Options` storage struct:
   - `StorageMap<B256, U256> balances` - (owner, tokenId) -> balance
   - `StorageMap<B256, U256> total_supply` - tokenId -> total supply
-- [ ] Add error variants as discovered:
+- [x] Add error variants as discovered:
   - `InsufficientBalance { available: U256, requested: U256 }`
   - `Overflow`
 
 **TTDD Step 2 - Tests:**
 
-- [ ] Test: Minting to address increases balance
-- [ ] Test: Minting increases total supply
-- [ ] Test: Burning from address decreases balance
-- [ ] Test: Burning decreases total supply
-- [ ] Test: Burning more than balance fails with InsufficientBalance
-- [ ] Test: Minting U256::MAX then minting 1 fails with Overflow
-- [ ] Test: Multiple mints accumulate correctly
-- [ ] Property test: Mint then burn same amount returns balance to zero
+- [x] Test: Minting to address increases balance
+- [x] Test: Minting increases total supply
+- [x] Test: Burning from address decreases balance
+- [x] Test: Burning decreases total supply
+- [x] Test: Burning more than balance fails with InsufficientBalance
+- [x] Test: Minting U256::MAX then minting 1 fails with Overflow
+- [x] Test: Multiple mints accumulate correctly
+- [x] Property test: Mint then burn same amount returns balance to zero
 
 **TTDD Step 3 - Implementation:**
 
-- [ ] Add `balance_key(owner: Address, token_id: B256) -> B256` helper
+- [x] Add `balance_key(owner: Address, token_id: B256) -> B256` helper
   - Use `keccak256(abi.encodePacked(owner, token_id))`
-- [ ] Add
+- [x] Add
       `_mint(to: Address, token_id: B256, quantity: U256) -> Result<(), OptionsError>`
   - Get current balance using `balance_key(to, token_id)`
   - Update balance with `checked_add`
   - Update total_supply with `checked_add`
-- [ ] Add
+- [x] Add
       `_burn(from: Address, token_id: B256, quantity: U256) -> Result<(), OptionsError>`
   - Get current balance using `balance_key(from, token_id)`
   - Verify `balance >= quantity`
@@ -176,9 +177,9 @@ Track option token balances and total supply.
 
 **Validation:**
 
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
-- [ ] `cargo fmt --check` passes
+- [x] `cargo test` passes
+- [x] `cargo clippy` passes (expected dead_code warnings until Task 9)
+- [x] `cargo fmt --check` passes
 
 **Design Decision**: Minimal ERC-1155 storage for option writing. Full
 compliance (transfers, approvals, events) deferred to #11. Using `keccak256` for
