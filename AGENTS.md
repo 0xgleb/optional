@@ -1165,6 +1165,29 @@ sol_interface! {
 }
 ```
 
+### CRITICAL: Quality Check Bypass Policy
+
+**NEVER bypass quality checks without explicit user permission.**
+
+**FORBIDDEN without permission:**
+
+- `#[ignore]` on tests - tests must run and pass
+- `#[allow(...)]` on lints - see Lint Policy above
+- Skipping `cargo test` before handoff
+- Skipping `cargo clippy` before handoff
+- Skipping `cargo fmt` before handoff
+- Committing code that doesn't compile
+- Committing code with failing tests
+
+**Rule:** All quality checks must pass at all times. If you need to bypass a
+check temporarily, ask for explicit permission first.
+
+**TTDD (Type-Test Driven Development) Rule:** Tests must verify CURRENT
+behavior, not future behavior. Never write tests with TODO comments or
+`#[ignore]` attributes that defer testing to "once implemented." If the code is
+a stub, the test verifies the stub returns the expected error. If the code is
+implemented, the test verifies the implementation works.
+
 ## Security Considerations
 
 ### Pre-Deployment Checklist
