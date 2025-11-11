@@ -60,6 +60,14 @@ sol! {
     error InsufficientBalance(uint256 available, uint256 requested);
     #[derive(Debug)]
     error Overflow();
+    #[derive(Debug)]
+    error InvalidStrike();
+    #[derive(Debug)]
+    error ExpiredOption(uint256 expiry, uint256 current);
+    #[derive(Debug)]
+    error InvalidQuantity();
+    #[derive(Debug)]
+    error SameToken();
 }
 
 #[derive(SolidityError, Debug)]
@@ -74,6 +82,14 @@ pub enum OptionsError {
     InsufficientBalance(InsufficientBalance),
     /// Arithmetic overflow.
     Overflow(Overflow),
+    /// Strike price must be greater than zero.
+    InvalidStrike(InvalidStrike),
+    /// Option expiry must be in the future.
+    ExpiredOption(ExpiredOption),
+    /// Quantity must be greater than zero.
+    InvalidQuantity(InvalidQuantity),
+    /// Underlying and quote tokens must be different.
+    SameToken(SameToken),
 }
 
 sol_storage! {
@@ -182,6 +198,58 @@ pub(crate) fn denormalize_amount(amount: U256, to_decimals: u8) -> Result<U256, 
     )?;
 
     Ok(amount / scale_factor)
+}
+
+/// Validates parameters for writing an option.
+///
+/// Performs comprehensive validation of all option parameters at the contract boundary.
+/// All external input is treated as untrusted.
+///
+/// # Parameters
+/// - `strike`: Strike price (must be > 0)
+/// - `expiry`: Expiration timestamp (must be > current_timestamp)
+/// - `quantity`: Quantity of options (must be > 0)
+/// - `underlying`: Underlying token
+/// - `quote`: Quote token
+/// - `current_timestamp`: Current block timestamp
+///
+/// # Errors
+/// - `InvalidStrike`: Strike price is zero
+/// - `ExpiredOption`: Expiry is not in the future
+/// - `InvalidQuantity`: Quantity is zero
+/// - `SameToken`: Underlying and quote addresses are identical
+pub(crate) fn validate_write_params(
+    strike: U256,
+    expiry: u64,
+    quantity: U256,
+    underlying: Token,
+    quote: Token,
+    current_timestamp: u64,
+) -> Result<(), OptionsError> {
+    // Validate strike > 0
+    if strike.is_zero() {
+        return Err(OptionsError::InvalidStrike(InvalidStrike {}));
+    }
+
+    // Validate expiry > current_timestamp
+    if expiry <= current_timestamp {
+        return Err(OptionsError::ExpiredOption(ExpiredOption {
+            expiry: U256::from(expiry),
+            current: U256::from(current_timestamp),
+        }));
+    }
+
+    // Validate quantity > 0
+    if quantity.is_zero() {
+        return Err(OptionsError::InvalidQuantity(InvalidQuantity {}));
+    }
+
+    // Validate underlying != quote
+    if underlying.address == quote.address {
+        return Err(OptionsError::SameToken(SameToken {}));
+    }
+
+    Ok(())
 }
 
 #[public]
@@ -883,6 +951,189 @@ mod tests {
 
         let total_supply = contract.sender(alice).total_supply_of(token_id);
         assert_eq!(total_supply, U256::ZERO);
+    }
+
+    #[test]
+    fn test_valid_parameters_pass_validation() {
+        let strike = U256::from(50_000);
+        let expiry = 1_700_000_000u64;
+        let quantity = U256::from(100);
+        let underlying = Token {
+            address: Address::from([0x11; 20]),
+            decimals: 18,
+        };
+        let quote = Token {
+            address: Address::from([0x22; 20]),
+            decimals: 6,
+        };
+        let current_timestamp = 1_600_000_000u64;
+
+        validate_write_params(
+            strike,
+            expiry,
+            quantity,
+            underlying,
+            quote,
+            current_timestamp,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_zero_strike_fails() {
+        let strike = U256::ZERO;
+        let expiry = 1_700_000_000u64;
+        let quantity = U256::from(100);
+        let underlying = Token {
+            address: Address::from([0x11; 20]),
+            decimals: 18,
+        };
+        let quote = Token {
+            address: Address::from([0x22; 20]),
+            decimals: 6,
+        };
+        let current_timestamp = 1_600_000_000u64;
+
+        let result = validate_write_params(
+            strike,
+            expiry,
+            quantity,
+            underlying,
+            quote,
+            current_timestamp,
+        );
+        assert!(matches!(result, Err(OptionsError::InvalidStrike(_))));
+    }
+
+    #[test]
+    fn test_past_expiry_fails() {
+        let strike = U256::from(50_000);
+        let expiry = 1_500_000_000u64; // Past timestamp
+        let quantity = U256::from(100);
+        let underlying = Token {
+            address: Address::from([0x11; 20]),
+            decimals: 18,
+        };
+        let quote = Token {
+            address: Address::from([0x22; 20]),
+            decimals: 6,
+        };
+        let current_timestamp = 1_600_000_000u64;
+
+        let result = validate_write_params(
+            strike,
+            expiry,
+            quantity,
+            underlying,
+            quote,
+            current_timestamp,
+        );
+        assert!(matches!(result, Err(OptionsError::ExpiredOption(_))));
+    }
+
+    #[test]
+    fn test_expiry_equals_current_timestamp_fails() {
+        let strike = U256::from(50_000);
+        let expiry = 1_600_000_000u64;
+        let quantity = U256::from(100);
+        let underlying = Token {
+            address: Address::from([0x11; 20]),
+            decimals: 18,
+        };
+        let quote = Token {
+            address: Address::from([0x22; 20]),
+            decimals: 6,
+        };
+        let current_timestamp = 1_600_000_000u64; // Same as expiry
+
+        let result = validate_write_params(
+            strike,
+            expiry,
+            quantity,
+            underlying,
+            quote,
+            current_timestamp,
+        );
+        assert!(matches!(result, Err(OptionsError::ExpiredOption(_))));
+    }
+
+    #[test]
+    fn test_zero_quantity_fails() {
+        let strike = U256::from(50_000);
+        let expiry = 1_700_000_000u64;
+        let quantity = U256::ZERO;
+        let underlying = Token {
+            address: Address::from([0x11; 20]),
+            decimals: 18,
+        };
+        let quote = Token {
+            address: Address::from([0x22; 20]),
+            decimals: 6,
+        };
+        let current_timestamp = 1_600_000_000u64;
+
+        let result = validate_write_params(
+            strike,
+            expiry,
+            quantity,
+            underlying,
+            quote,
+            current_timestamp,
+        );
+        assert!(matches!(result, Err(OptionsError::InvalidQuantity(_))));
+    }
+
+    #[test]
+    fn test_same_underlying_and_quote_fails() {
+        let strike = U256::from(50_000);
+        let expiry = 1_700_000_000u64;
+        let quantity = U256::from(100);
+        let same_address = Address::from([0x11; 20]);
+        let underlying = Token {
+            address: same_address,
+            decimals: 18,
+        };
+        let quote = Token {
+            address: same_address,
+            decimals: 6,
+        };
+        let current_timestamp = 1_600_000_000u64;
+
+        let result = validate_write_params(
+            strike,
+            expiry,
+            quantity,
+            underlying,
+            quote,
+            current_timestamp,
+        );
+        assert!(matches!(result, Err(OptionsError::SameToken(_))));
+    }
+
+    #[test]
+    fn test_minimum_valid_expiry_passes() {
+        let strike = U256::from(50_000);
+        let current_timestamp = 1_600_000_000u64;
+        let expiry = current_timestamp + 1; // Minimum valid expiry
+        let quantity = U256::from(100);
+        let underlying = Token {
+            address: Address::from([0x11; 20]),
+            decimals: 18,
+        };
+        let quote = Token {
+            address: Address::from([0x22; 20]),
+            decimals: 6,
+        };
+
+        validate_write_params(
+            strike,
+            expiry,
+            quantity,
+            underlying,
+            quote,
+            current_timestamp,
+        )
+        .unwrap();
     }
 
     // Token ID Generation Tests
