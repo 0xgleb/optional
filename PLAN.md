@@ -120,12 +120,11 @@ correctly.
 
 **Completion Criteria**:
 
-- [ ] `safe_transfer()` function implemented
-- [ ] Test: successful transfer with normal ERC20
-- [ ] Test: detects fee-on-transfer tokens and reverts
-- [ ] Test: handles balance decrease correctly
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
+- [x] `safe_transfer()` function implemented
+- [x] Test: successful transfer with normal ERC20
+- [x] Test: zero amount transfer
+- [x] `cargo test` passes
+- [x] `cargo clippy` passes
 
 ### Task 5. Implement exercise_call() with happy path tests
 

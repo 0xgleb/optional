@@ -53,6 +53,7 @@ sol_interface! {
     /// ERC20 interface for interacting with external token contracts.
     interface IERC20 {
         function balanceOf(address account) external view returns (uint256);
+        function transfer(address to, uint256 value) external returns (bool);
         function transferFrom(address from, address to, uint256 value) external returns (bool);
     }
 }
@@ -732,6 +733,60 @@ impl Options {
         Ok(())
     }
 
+    /// Safely transfers ERC20 tokens from contract to recipient with fee-on-transfer detection.
+    ///
+    /// Checks the recipient's balance before and after transfer to ensure the full
+    /// amount was received. This prevents fee-on-transfer tokens from breaking
+    /// settlement accounting.
+    ///
+    /// # Parameters
+    /// - `token`: ERC20 token contract address
+    /// - `to`: Recipient address
+    /// - `amount`: Amount to transfer
+    ///
+    /// # Errors
+    /// - `TransferFailed`: ERC20 transfer call failed
+    /// - `FeeOnTransferDetected`: Received amount doesn't match requested amount
+    /// - `UnexpectedBalanceDecrease`: Balance decreased instead of increased
+    #[allow(deprecated)]
+    pub fn safe_transfer(
+        &mut self,
+        token: Address,
+        to: Address,
+        amount: U256,
+    ) -> Result<(), OptionsError> {
+        let erc20 = IERC20::new(token);
+
+        let balance_before = erc20
+            .balance_of(Call::new_in(self), to)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        let success = erc20
+            .transfer(Call::new_in(self), to, amount)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        if !success {
+            return Err(OptionsError::TransferFailed(TransferFailed {}));
+        }
+
+        let balance_after = erc20
+            .balance_of(Call::new_in(self), to)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        let received = balance_after.checked_sub(balance_before).ok_or(
+            OptionsError::UnexpectedBalanceDecrease(UnexpectedBalanceDecrease {}),
+        )?;
+
+        if received != amount {
+            return Err(OptionsError::FeeOnTransferDetected(FeeOnTransferDetected {
+                expected: amount,
+                received,
+            }));
+        }
+
+        Ok(())
+    }
+
     /// Stores option metadata for a token ID.
     ///
     /// Metadata is stored once per option series on first write. Subsequent writes
@@ -951,17 +1006,15 @@ impl Options {
             .checked_sub(quantity)
             .ok_or(OptionsError::Overflow(Overflow {}))?;
 
-        let collateral_per_unit = if current_quantity.is_zero() {
+        let collateral_to_reduce = if current_quantity.is_zero() {
             U256::ZERO
         } else {
             current_collateral
+                .checked_mul(quantity)
+                .ok_or(OptionsError::Overflow(Overflow {}))?
                 .checked_div(current_quantity)
                 .ok_or(OptionsError::Overflow(Overflow {}))?
         };
-
-        let collateral_to_reduce = collateral_per_unit
-            .checked_mul(quantity)
-            .ok_or(OptionsError::Overflow(Overflow {}))?;
 
         let new_collateral = current_collateral
             .checked_sub(collateral_to_reduce)
