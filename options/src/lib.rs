@@ -146,6 +146,14 @@ sol_storage! {
         uint8 option_type;
     }
 
+    /// Writer position for an option series.
+    pub struct Position {
+        /// Quantity of options written (18 decimals normalized)
+        uint256 quantity_written;
+        /// Collateral locked (18 decimals normalized)
+        uint256 collateral_locked;
+    }
+
     #[entrypoint]
     pub struct Options {
         /// Mapping from balance_key(owner, token_id) to balance
@@ -154,6 +162,8 @@ sol_storage! {
         mapping(bytes32 => uint256) total_supply;
         /// Mapping from token_id to option metadata
         mapping(bytes32 => OptionMetadata) option_metadata;
+        /// Mapping from position_key(writer, token_id) to position
+        mapping(bytes32 => Position) positions;
     }
 }
 
@@ -686,6 +696,71 @@ impl Options {
             expiry: metadata.expiry.get(),
             option_type: metadata.option_type.get().to::<u8>(),
         }
+    }
+
+    /// Generates a composite key for position lookups.
+    ///
+    /// Position key = keccak256(writer, token_id)
+    ///
+    /// Each writer has independent positions per option series.
+    fn position_key(writer: Address, token_id: B256) -> B256 {
+        keccak256([writer.as_slice(), token_id.as_slice()].concat())
+    }
+
+    /// Creates or updates a writer's position for an option series.
+    ///
+    /// If position exists, accumulates quantity and collateral using checked arithmetic.
+    /// If position is new, creates it with provided values.
+    ///
+    /// # Parameters
+    /// - `writer`: Writer address
+    /// - `token_id`: ERC-1155 token ID
+    /// - `quantity`: Quantity to add (18 decimals normalized)
+    /// - `collateral`: Collateral to add (18 decimals normalized)
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Overflow` if accumulation would overflow
+    pub(crate) fn create_or_update_position(
+        &mut self,
+        writer: Address,
+        token_id: B256,
+        quantity: U256,
+        collateral: U256,
+    ) -> Result<(), OptionsError> {
+        let key = Self::position_key(writer, token_id);
+        let mut position = self.positions.setter(key);
+
+        let current_quantity = position.quantity_written.get();
+        let current_collateral = position.collateral_locked.get();
+
+        let new_quantity = current_quantity
+            .checked_add(quantity)
+            .ok_or(OptionsError::Overflow(Overflow {}))?;
+        let new_collateral = current_collateral
+            .checked_add(collateral)
+            .ok_or(OptionsError::Overflow(Overflow {}))?;
+
+        position.quantity_written.set(new_quantity);
+        position.collateral_locked.set(new_collateral);
+
+        Ok(())
+    }
+
+    /// Retrieves a writer's position for an option series.
+    ///
+    /// # Parameters
+    /// - `writer`: Writer address
+    /// - `token_id`: ERC-1155 token ID
+    ///
+    /// # Returns
+    /// Tuple of (quantity_written, collateral_locked)
+    pub(crate) fn get_position(&self, writer: Address, token_id: B256) -> (U256, U256) {
+        let key = Self::position_key(writer, token_id);
+        let position = self.positions.get(key);
+        (
+            position.quantity_written.get(),
+            position.collateral_locked.get(),
+        )
     }
 }
 
@@ -1567,6 +1642,96 @@ mod tests {
         // Verify they're different
         assert_ne!(metadata_1.underlying, metadata_2.underlying);
         assert_ne!(metadata_1.strike, metadata_2.strike);
+    }
+
+    // Writer Position Tracking Tests
+    #[motsu::test]
+    fn test_create_new_position_stores_quantity_and_collateral(contract: Contract<Options>) {
+        let writer = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x01; 32]);
+        let quantity = U256::from(100);
+        let collateral = U256::from(200);
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, quantity, collateral)
+            .unwrap();
+
+        let (stored_quantity, stored_collateral) =
+            contract.sender(writer).get_position(writer, token_id);
+
+        assert_eq!(stored_quantity, quantity);
+        assert_eq!(stored_collateral, collateral);
+    }
+
+    #[motsu::test]
+    fn test_increase_existing_position_accumulates_correctly(contract: Contract<Options>) {
+        let writer = Address::from([0xBB; 20]);
+        let token_id = B256::from([0x02; 32]);
+        let initial_quantity = U256::from(50);
+        let initial_collateral = U256::from(100);
+        let additional_quantity = U256::from(30);
+        let additional_collateral = U256::from(60);
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, initial_quantity, initial_collateral)
+            .unwrap();
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, additional_quantity, additional_collateral)
+            .unwrap();
+
+        let (final_quantity, final_collateral) =
+            contract.sender(writer).get_position(writer, token_id);
+
+        assert_eq!(final_quantity, U256::from(80));
+        assert_eq!(final_collateral, U256::from(160));
+    }
+
+    #[motsu::test]
+    fn test_different_writers_same_token_id_have_independent_positions(
+        contract: Contract<Options>,
+    ) {
+        let writer1 = Address::from([0xCC; 20]);
+        let writer2 = Address::from([0xDD; 20]);
+        let token_id = B256::from([0x03; 32]);
+        let quantity1 = U256::from(100);
+        let collateral1 = U256::from(200);
+        let quantity2 = U256::from(150);
+        let collateral2 = U256::from(300);
+
+        contract
+            .sender(writer1)
+            .create_or_update_position(writer1, token_id, quantity1, collateral1)
+            .unwrap();
+
+        contract
+            .sender(writer2)
+            .create_or_update_position(writer2, token_id, quantity2, collateral2)
+            .unwrap();
+
+        let (stored_quantity1, stored_collateral1) =
+            contract.sender(writer1).get_position(writer1, token_id);
+        let (stored_quantity2, stored_collateral2) =
+            contract.sender(writer2).get_position(writer2, token_id);
+
+        assert_eq!(stored_quantity1, quantity1);
+        assert_eq!(stored_collateral1, collateral1);
+        assert_eq!(stored_quantity2, quantity2);
+        assert_eq!(stored_collateral2, collateral2);
+    }
+
+    #[test]
+    fn test_position_key_is_deterministic() {
+        let writer = Address::from([0xEE; 20]);
+        let token_id = B256::from([0x04; 32]);
+
+        let key1 = Options::position_key(writer, token_id);
+        let key2 = Options::position_key(writer, token_id);
+
+        assert_eq!(key1, key2);
     }
 
     // Token ID Generation Tests

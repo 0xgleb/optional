@@ -324,24 +324,24 @@ Track collateral locked by each writer per option series.
 
 **TTDD Step 1 - Types:**
 
-- [ ] Define `Position` in `sol_storage!` block:
+- [x] Define `Position` in `sol_storage!` block:
   - `uint256 quantity_written` (18 decimals)
   - `uint256 collateral_locked` (18 decimals)
-- [ ] Add to `Options` storage:
+- [x] Add to `Options` storage:
   - `StorageMap<B256, Position> positions`
 
 **TTDD Step 2 - Tests:**
 
-- [ ] Test: Create new position stores quantity and collateral
-- [ ] Test: Increase existing position accumulates correctly
-- [ ] Test: Different writers same token ID have independent positions
-- [ ] Test: Position key is deterministic for (writer, token_id)
+- [x] Test: Create new position stores quantity and collateral
+- [x] Test: Increase existing position accumulates correctly
+- [x] Test: Different writers same token ID have independent positions
+- [x] Test: Position key is deterministic for (writer, token_id)
 
 **TTDD Step 3 - Implementation:**
 
-- [ ] Add `position_key(writer: Address, token_id: B256) -> B256` helper
+- [x] Add `position_key(writer: Address, token_id: B256) -> B256` helper
   - Use `keccak256(abi.encodePacked(writer, token_id))`
-- [ ] Add
+- [x] Add
       `create_or_update_position(writer: Address, token_id: B256, quantity: U256, collateral: U256) -> Result<(), OptionsError>`
   - Get position using `position_key(writer, token_id)`
   - If exists: update with `checked_add`
@@ -350,9 +350,9 @@ Track collateral locked by each writer per option series.
 
 **Validation:**
 
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
-- [ ] `cargo fmt --check` passes
+- [x] `cargo test` passes (54 tests)
+- [x] `cargo clippy` passes (expected dead_code warnings for Task 9 functions)
+- [x] `cargo fmt --check` passes
 
 **Design Decision**: Each writer has independent position per token ID. Position
 keys use `keccak256(writer, tokenId)` for deterministic lookups. StorageMap
