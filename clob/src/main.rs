@@ -2,7 +2,7 @@
 
 #[cfg(not(any(test, feature = "export-abi")))]
 #[no_mangle]
-pub extern "C" fn main() {}
+pub const extern "C" fn main() {}
 
 #[cfg(feature = "export-abi")]
 fn main() {
