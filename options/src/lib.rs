@@ -2067,3 +2067,130 @@ mod tests {
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    proptest! {
+        #[test]
+        fn prop_token_id_determinism(
+            underlying in any::<Address>(),
+            quote in any::<Address>(),
+            strike in any::<U256>(),
+            expiry in any::<u64>(),
+            is_call in any::<bool>(),
+        ) {
+            let option_type = if is_call { OptionType::Call } else { OptionType::Put };
+
+            let token_id_1 = generate_token_id(underlying, quote, strike, expiry, option_type);
+            let token_id_2 = generate_token_id(underlying, quote, strike, expiry, option_type);
+            let token_id_3 = generate_token_id(underlying, quote, strike, expiry, option_type);
+
+            prop_assert_eq!(token_id_1, token_id_2);
+            prop_assert_eq!(token_id_2, token_id_3);
+        }
+
+        #[test]
+        fn prop_decimal_round_trip(
+            amount in 1u64..=1_000_000_000_000u64,
+            decimals in 0u8..=18u8,
+        ) {
+            let amount_u256 = U256::from(amount);
+
+            let normalized = normalize_amount(amount_u256, decimals);
+            prop_assert!(normalized.is_ok());
+
+            let normalized_value = normalized.unwrap();
+            let denormalized = denormalize_amount(normalized_value, decimals);
+            prop_assert!(denormalized.is_ok());
+
+            prop_assert_eq!(denormalized.unwrap(), amount_u256);
+        }
+
+        #[test]
+        fn prop_normalize_never_panics(
+            amount in any::<u64>(),
+            decimals in any::<u8>(),
+        ) {
+            let amount_u256 = U256::from(amount);
+            let result = normalize_amount(amount_u256, decimals);
+            prop_assert!(result.is_ok() || result.is_err());
+        }
+
+        #[test]
+        fn prop_denormalize_never_panics(
+            amount_low in any::<u64>(),
+            decimals in any::<u8>(),
+        ) {
+            let amount = U256::from(amount_low);
+            let result = denormalize_amount(amount, decimals);
+            prop_assert!(result.is_ok() || result.is_err());
+        }
+
+        #[test]
+        fn prop_validate_params_never_panics(
+            strike in any::<U256>(),
+            expiry in any::<u64>(),
+            quantity in any::<U256>(),
+            underlying_address in any::<Address>(),
+            quote_address in any::<Address>(),
+            underlying_decimals in any::<u8>(),
+            quote_decimals in any::<u8>(),
+            current_time in any::<u64>(),
+        ) {
+            let underlying = Token {
+                address: underlying_address,
+                decimals: underlying_decimals,
+            };
+            let quote = Token {
+                address: quote_address,
+                decimals: quote_decimals,
+            };
+
+            let result = validate_write_params(strike, expiry, quantity, underlying, quote, current_time);
+            prop_assert!(result.is_ok() || result.is_err());
+        }
+
+        #[test]
+        fn prop_position_key_determinism(
+            writer in any::<Address>(),
+            token_id in any::<B256>(),
+        ) {
+            let key1 = Options::position_key(writer, token_id);
+            let key2 = Options::position_key(writer, token_id);
+            let key3 = Options::position_key(writer, token_id);
+
+            prop_assert_eq!(key1, key2);
+            prop_assert_eq!(key2, key3);
+        }
+
+        #[test]
+        fn prop_different_writers_different_keys(
+            writer1 in any::<Address>(),
+            writer2 in any::<Address>(),
+            token_id in any::<B256>(),
+        ) {
+            prop_assume!(writer1 != writer2);
+
+            let key1 = Options::position_key(writer1, token_id);
+            let key2 = Options::position_key(writer2, token_id);
+            prop_assert_ne!(key1, key2);
+        }
+
+        #[test]
+        fn prop_different_token_ids_different_keys(
+            writer in any::<Address>(),
+            token_id1 in any::<B256>(),
+            token_id2 in any::<B256>(),
+        ) {
+            prop_assume!(token_id1 != token_id2);
+
+            let key1 = Options::position_key(writer, token_id1);
+            let key2 = Options::position_key(writer, token_id2);
+            prop_assert_ne!(key1, key2);
+        }
+    }
+}

@@ -436,34 +436,34 @@ Verify invariants hold across random inputs.
 
 **TTDD Step 1 - Types:**
 
-- [ ] Add `proptest` dependency to `Cargo.toml`
+- [x] Add `proptest` dependency to `Cargo.toml`
 
 **TTDD Step 2 & 3 - Tests & Implementation:**
 
-- [ ] Property: Token ID determinism
+- [x] Property: Token ID determinism
   - Generate random option parameters
   - Call `generate_token_id` N times
   - Verify all results identical
-- [ ] Property: Decimal round-trip
+- [x] Property: Decimal round-trip
   - Generate random (amount, decimals) where decimals ∈ [0, 18]
   - Normalize then denormalize
   - Verify result equals original
-- [ ] Property: No arithmetic panics
+- [x] Property: No arithmetic panics
   - Generate random (amount, decimals, quantity, strike, expiry)
   - Call all functions
   - Verify either Ok() or Err(), never panic
-- [ ] Property: Balance invariant
+- [x] Property: Balance invariant
   - Generate random mint/burn sequences
   - Verify balance + total_supply always consistent
-- [ ] Property: Position invariant
+- [x] Property: Position invariant
   - Generate random write sequences
   - Verify position.quantity_written == sum of writes
   - Verify position.collateral_locked == sum of collateral
 
 **Validation:**
 
-- [ ] `cargo test` passes all property tests
-- [ ] Tests run reasonable number of iterations (100-1000)
+- [x] `cargo test` passes all property tests
+- [x] Tests run reasonable number of iterations (100-1000)
 
 **Design Decision**: Property-based tests find edge cases unit tests miss.
 Critical for financial contracts where edge cases = fund loss.
