@@ -625,6 +625,10 @@ impl From<OptionsError> for Vec<u8> {
 - Obvious code (e.g., "transfer tokens" before `token.transfer()`)
 - Function signatures (use doc comments `///` instead)
 - Redundant explanations of what code clearly does
+- Self-explanatory well-named code (e.g., "Get balance before transfer" before
+  `balance_before = ...`)
+- Step-by-step narration of the code (code should be self-documenting through
+  clear naming)
 
 **Examples:**
 
@@ -712,11 +716,54 @@ use crate::erc20::IERC20;
 use crate::errors::OptionsError;
 ```
 
+**CRITICAL: Zero Tolerance for Function-Level Imports**
+
+All imports MUST be at the top of the module (note: "top of module", not
+necessarily "top of file"). Function-level imports are FORBIDDEN.
+
 **FORBIDDEN:**
+
+```rust
+// WRONG: Imports inside function
+fn generate_token_id(...) -> B256 {
+    use alloy_primitives::keccak256;  // FORBIDDEN!
+    use alloy_sol_types::SolValue;    // FORBIDDEN!
+
+    keccak256(encoded)
+}
+```
+
+**CORRECT:**
+
+```rust
+// CORRECT: Imports at top of module
+use alloy_primitives::keccak256;
+use alloy_sol_types::SolValue;
+
+fn generate_token_id(...) -> B256 {
+    keccak256(encoded)
+}
+```
+
+**Rare Exception - Qualified Use for Ambiguity:**
+
+The ONLY exception is when using qualified imports to avoid name conflicts:
+
+```rust
+use foo::Result as FooResult;
+use bar::Result as BarResult;
+
+fn process() -> Result<(), Error> {  // stdlib Result
+    let foo_res: FooResult = ...;
+    let bar_res: BarResult = ...;
+    Ok(())
+}
+```
+
+**Additional FORBIDDEN Patterns:**
 
 - Three or more import groups
 - Empty lines between imports within a group
-- Function-level imports
 
 ### Testing Strategy
 

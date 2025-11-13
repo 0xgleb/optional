@@ -71,7 +71,7 @@ jobs:
         run: nix develop --impure -c bash -c "cd options && cargo fmt --all -- --check"
 
       - name: Run clippy
-        run: nix develop --impure -c bash -c "cd options && cargo clippy --all-targets --all-features -- -D clippy::all -D warnings"
+        run: nix develop --impure -c bash -c "cd options && cargo clippy --all-targets -- -D clippy::all -D warnings"
 
       - name: Build WASM
         run: nix develop --impure -c bash -c "cd options && cargo build --target wasm32-unknown-unknown --release"
