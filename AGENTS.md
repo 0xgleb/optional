@@ -625,6 +625,10 @@ impl From<OptionsError> for Vec<u8> {
 - Obvious code (e.g., "transfer tokens" before `token.transfer()`)
 - Function signatures (use doc comments `///` instead)
 - Redundant explanations of what code clearly does
+- Self-explanatory well-named code (e.g., "Get balance before transfer" before
+  `balance_before = ...`)
+- Step-by-step narration of the code (code should be self-documenting through
+  clear naming)
 
 **Examples:**
 

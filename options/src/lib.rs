@@ -3,9 +3,12 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256, U8};
 use alloy_sol_types::sol;
 
+// Note: Using deprecated Call until sol_interface! macro is updated to use new trait paths
+#[allow(deprecated)]
+use stylus_sdk::call::Call;
 use stylus_sdk::prelude::*;
 
 sol! {
@@ -15,12 +18,32 @@ sol! {
         address address;
         uint8 decimals;
     }
+
+    /// Metadata for an option series (non-storage version for returning data).
+    #[derive(Copy)]
+    struct OptionMetadataView {
+        address underlying;
+        address quote;
+        uint8 underlying_decimals;
+        uint8 quote_decimals;
+        uint256 strike;
+        uint256 expiry;
+        uint8 option_type;
+    }
 }
 
 // Implement AbiType for Token to make it usable in #[public] functions
 impl stylus_sdk::abi::AbiType for Token {
     type SolType = Self;
     const ABI: stylus_sdk::abi::ConstString = stylus_sdk::abi::ConstString::new("(address,uint8)");
+}
+
+sol_interface! {
+    /// ERC20 interface for interacting with external token contracts.
+    interface IERC20 {
+        function balanceOf(address account) external view returns (uint256);
+        function transferFrom(address from, address to, uint256 value) external returns (bool);
+    }
 }
 
 /// Represents the type of option contract.
@@ -68,6 +91,12 @@ sol! {
     error InvalidQuantity();
     #[derive(Debug)]
     error SameToken();
+    #[derive(Debug)]
+    error FeeOnTransferDetected(uint256 expected, uint256 received);
+    #[derive(Debug)]
+    error TransferFailed();
+    #[derive(Debug)]
+    error UnexpectedBalanceDecrease();
 }
 
 #[derive(SolidityError, Debug)]
@@ -90,15 +119,41 @@ pub enum OptionsError {
     InvalidQuantity(InvalidQuantity),
     /// Underlying and quote tokens must be different.
     SameToken(SameToken),
+    /// Fee-on-transfer token detected.
+    FeeOnTransferDetected(FeeOnTransferDetected),
+    /// ERC20 transfer failed.
+    TransferFailed(TransferFailed),
+    /// Balance decreased unexpectedly.
+    UnexpectedBalanceDecrease(UnexpectedBalanceDecrease),
 }
 
 sol_storage! {
+    /// Metadata for an option series.
+    pub struct OptionMetadata {
+        /// Underlying token address
+        address underlying;
+        /// Quote token address
+        address quote;
+        /// Underlying token decimals
+        uint8 underlying_decimals;
+        /// Quote token decimals
+        uint8 quote_decimals;
+        /// Strike price (18 decimals normalized)
+        uint256 strike;
+        /// Expiration timestamp
+        uint256 expiry;
+        /// Option type (0=Call, 1=Put)
+        uint8 option_type;
+    }
+
     #[entrypoint]
     pub struct Options {
         /// Mapping from balance_key(owner, token_id) to balance
         mapping(bytes32 => uint256) balances;
         /// Mapping from token_id to total supply
         mapping(bytes32 => uint256) total_supply;
+        /// Mapping from token_id to option metadata
+        mapping(bytes32 => OptionMetadata) option_metadata;
     }
 }
 
@@ -365,6 +420,9 @@ impl Options {
 /// Test-only helper methods (accessible through motsu deref)
 impl Options {
     /// Test wrapper for _mint - accessible in motsu tests through deref
+    ///
+    /// # Errors
+    /// Returns `OptionsError::Overflow` if balance or total supply would overflow
     #[cfg(test)]
     pub fn test_mint(
         &mut self,
@@ -376,6 +434,9 @@ impl Options {
     }
 
     /// Test wrapper for _burn - accessible in motsu tests through deref
+    ///
+    /// # Errors
+    /// Returns `OptionsError::InsufficientBalance` if balance is less than quantity
     #[cfg(test)]
     pub fn test_burn(
         &mut self,
@@ -388,12 +449,14 @@ impl Options {
 
     /// Test wrapper for balance_of - accessible in motsu tests through deref
     #[cfg(test)]
+    #[must_use]
     pub fn test_balance_of(&self, owner: Address, token_id: B256) -> U256 {
         self.balance_of(owner, token_id)
     }
 
     /// Test wrapper for total_supply_of - accessible in motsu tests through deref
     #[cfg(test)]
+    #[must_use]
     pub fn test_total_supply_of(&self, token_id: B256) -> U256 {
         self.total_supply_of(token_id)
     }
@@ -514,6 +577,115 @@ impl Options {
     /// Total supply (0 if no tokens minted)
     pub(crate) fn total_supply_of(&self, token_id: B256) -> U256 {
         self.total_supply.get(token_id)
+    }
+
+    /// Safely transfers ERC20 tokens with fee-on-transfer detection.
+    ///
+    /// Checks the recipient's balance before and after transfer to ensure the full
+    /// amount was received. This prevents fee-on-transfer tokens from breaking
+    /// collateral accounting.
+    ///
+    /// # Parameters
+    /// - `token`: ERC20 token contract address
+    /// - `from`: Address to transfer from (requires prior approval)
+    /// - `to`: Recipient address
+    /// - `amount`: Amount to transfer
+    ///
+    /// # Errors
+    /// - `TransferFailed`: ERC20 transferFrom call failed
+    /// - `FeeOnTransferDetected`: Received amount doesn't match requested amount
+    /// - `UnexpectedBalanceDecrease`: Balance decreased instead of increased
+    #[allow(deprecated)]
+    pub(crate) fn safe_transfer_from(
+        &mut self,
+        token: Address,
+        from: Address,
+        to: Address,
+        amount: U256,
+    ) -> Result<(), OptionsError> {
+        let erc20 = IERC20::new(token);
+
+        let balance_before = erc20
+            .balance_of(Call::new_in(self), to)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        let success = erc20
+            .transfer_from(Call::new_in(self), from, to, amount)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        if !success {
+            return Err(OptionsError::TransferFailed(TransferFailed {}));
+        }
+
+        let balance_after = erc20
+            .balance_of(Call::new_in(self), to)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        let received = balance_after.checked_sub(balance_before).ok_or(
+            OptionsError::UnexpectedBalanceDecrease(UnexpectedBalanceDecrease {}),
+        )?;
+
+        if received != amount {
+            return Err(OptionsError::FeeOnTransferDetected(FeeOnTransferDetected {
+                expected: amount,
+                received,
+            }));
+        }
+
+        Ok(())
+    }
+
+    /// Stores option metadata for a token ID.
+    ///
+    /// Metadata is stored once per option series on first write. Subsequent writes
+    /// of the same option parameters reuse the existing metadata.
+    ///
+    /// # Parameters
+    /// - `token_id`: ERC-1155 token ID (deterministic hash of option parameters)
+    /// - `underlying`: Underlying token (address and decimals)
+    /// - `quote`: Quote token (address and decimals)
+    /// - `strike`: Strike price (18 decimals normalized)
+    /// - `expiry`: Expiration timestamp
+    /// - `option_type`: Call or Put
+    pub(crate) fn store_option_metadata(
+        &mut self,
+        token_id: B256,
+        underlying: Token,
+        quote: Token,
+        strike: U256,
+        expiry: u64,
+        option_type: OptionType,
+    ) {
+        let mut metadata = self.option_metadata.setter(token_id);
+        metadata.underlying.set(underlying.address);
+        metadata.quote.set(quote.address);
+        metadata
+            .underlying_decimals
+            .set(U8::from(underlying.decimals));
+        metadata.quote_decimals.set(U8::from(quote.decimals));
+        metadata.strike.set(strike);
+        metadata.expiry.set(U256::from(expiry));
+        metadata.option_type.set(U8::from(option_type.to_u8()));
+    }
+
+    /// Retrieves option metadata for a token ID.
+    ///
+    /// # Parameters
+    /// - `token_id`: ERC-1155 token ID
+    ///
+    /// # Returns
+    /// Option metadata struct with all option parameters
+    pub(crate) fn get_option_metadata(&self, token_id: B256) -> OptionMetadataView {
+        let metadata = self.option_metadata.get(token_id);
+        OptionMetadataView {
+            underlying: metadata.underlying.get(),
+            quote: metadata.quote.get(),
+            underlying_decimals: metadata.underlying_decimals.get().to::<u8>(),
+            quote_decimals: metadata.quote_decimals.get().to::<u8>(),
+            strike: metadata.strike.get(),
+            expiry: metadata.expiry.get(),
+            option_type: metadata.option_type.get().to::<u8>(),
+        }
     }
 }
 
@@ -1134,6 +1306,267 @@ mod tests {
             current_timestamp,
         )
         .unwrap();
+    }
+
+    // Fee-on-Transfer Detection Tests
+    #[test]
+    fn test_transfer_from_mock_erc20_succeeds() {
+        let mut token = MockERC20::default();
+        let from = Address::from([0x01; 20]);
+        let to = Address::from([0x02; 20]);
+        let amount = U256::from(1000);
+
+        token.mint(from, U256::from(10000));
+        token.approve(from, from, U256::from(10000));
+
+        let balance_before = token.balance_of(to);
+        let success = token.transfer_from(from, from, to, amount);
+        let balance_after = token.balance_of(to);
+
+        assert!(success);
+        let received = balance_after.checked_sub(balance_before).unwrap();
+        assert_eq!(received, amount);
+    }
+
+    #[test]
+    fn test_transfer_from_fee_on_transfer_fails_detection() {
+        let mut token = FeeOnTransferERC20::default();
+        let from = Address::from([0x01; 20]);
+        let to = Address::from([0x02; 20]);
+        let amount = U256::from(1000);
+
+        token.mint(from, U256::from(10000));
+
+        let balance_before = token.balance_of(to);
+        token.transfer(from, to, amount);
+        let balance_after = token.balance_of(to);
+
+        let received = balance_after.checked_sub(balance_before).unwrap();
+        // FeeOnTransferERC20 deducts 1% fee, so received should be less than amount
+        assert!(received < amount);
+        assert_eq!(received, amount - (amount / U256::from(100)));
+    }
+
+    #[test]
+    fn test_fee_on_transfer_error_contains_correct_amounts() {
+        let expected = U256::from(1000);
+        let received = U256::from(990); // 1% fee deducted
+
+        let error =
+            OptionsError::FeeOnTransferDetected(FeeOnTransferDetected { expected, received });
+
+        match error {
+            OptionsError::FeeOnTransferDetected(e) => {
+                assert_eq!(e.expected, expected);
+                assert_eq!(e.received, received);
+            }
+            _ => panic!("Expected FeeOnTransferDetected error"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_safe_transfers_all_succeed() {
+        let mut token = MockERC20::default();
+        let from = Address::from([0x01; 20]);
+        let to1 = Address::from([0x02; 20]);
+        let to2 = Address::from([0x03; 20]);
+        let to3 = Address::from([0x04; 20]);
+        let amount = U256::from(100);
+
+        token.mint(from, U256::from(10000));
+        token.approve(from, from, U256::from(10000));
+
+        let balance_before = token.balance_of(to1);
+        let success = token.transfer_from(from, from, to1, amount);
+        let balance_after = token.balance_of(to1);
+        assert!(success);
+        assert_eq!(balance_after.checked_sub(balance_before).unwrap(), amount);
+
+        let balance_before = token.balance_of(to2);
+        let success = token.transfer_from(from, from, to2, amount);
+        let balance_after = token.balance_of(to2);
+        assert!(success);
+        assert_eq!(balance_after.checked_sub(balance_before).unwrap(), amount);
+
+        let balance_before = token.balance_of(to3);
+        let success = token.transfer_from(from, from, to3, amount);
+        let balance_after = token.balance_of(to3);
+        assert!(success);
+        assert_eq!(balance_after.checked_sub(balance_before).unwrap(), amount);
+    }
+
+    // Option Metadata Storage Tests
+    #[motsu::test]
+    fn test_store_and_retrieve_metadata(contract: Contract<Options>) {
+        let token_id = B256::from([0x42; 32]);
+        let underlying = Token {
+            address: Address::from([0x11; 20]),
+            decimals: 8,
+        };
+        let quote = Token {
+            address: Address::from([0x22; 20]),
+            decimals: 6,
+        };
+        let strike = U256::from(50_000);
+        let expiry = 1_700_000_000u64;
+        let option_type = OptionType::Call;
+
+        contract.sender(Address::ZERO).store_option_metadata(
+            token_id,
+            underlying,
+            quote,
+            strike,
+            expiry,
+            option_type,
+        );
+
+        let metadata = contract.sender(Address::ZERO).get_option_metadata(token_id);
+
+        assert_eq!(metadata.underlying, underlying.address);
+        assert_eq!(metadata.quote, quote.address);
+        assert_eq!(metadata.underlying_decimals, underlying.decimals);
+        assert_eq!(metadata.quote_decimals, quote.decimals);
+        assert_eq!(metadata.strike, strike);
+        assert_eq!(metadata.expiry, U256::from(expiry));
+        assert_eq!(metadata.option_type, option_type.to_u8());
+    }
+
+    #[motsu::test]
+    fn test_metadata_fields_match_input_parameters(contract: Contract<Options>) {
+        let token_id = B256::from([0x99; 32]);
+        let underlying = Token {
+            address: Address::from([0xAA; 20]),
+            decimals: 18,
+        };
+        let quote = Token {
+            address: Address::from([0xBB; 20]),
+            decimals: 6,
+        };
+        let strike = U256::from(100_000);
+        let expiry = 1_800_000_000u64;
+        let option_type = OptionType::Put;
+
+        contract.sender(Address::ZERO).store_option_metadata(
+            token_id,
+            underlying,
+            quote,
+            strike,
+            expiry,
+            option_type,
+        );
+
+        let metadata = contract.sender(Address::ZERO).get_option_metadata(token_id);
+
+        assert_eq!(metadata.underlying, underlying.address);
+        assert_eq!(metadata.quote, quote.address);
+        assert_eq!(metadata.underlying_decimals, 18);
+        assert_eq!(metadata.quote_decimals, 6);
+        assert_eq!(metadata.strike, U256::from(100_000));
+        assert_eq!(metadata.expiry, U256::from(1_800_000_000u64));
+        assert_eq!(metadata.option_type, 1); // Put = 1
+    }
+
+    #[motsu::test]
+    fn test_same_token_id_retrieves_same_metadata(contract: Contract<Options>) {
+        let token_id = B256::from([0x77; 32]);
+        let underlying = Token {
+            address: Address::from([0x33; 20]),
+            decimals: 8,
+        };
+        let quote = Token {
+            address: Address::from([0x44; 20]),
+            decimals: 6,
+        };
+        let strike = U256::from(60_000);
+        let expiry = 1_750_000_000u64;
+        let option_type = OptionType::Call;
+
+        contract.sender(Address::ZERO).store_option_metadata(
+            token_id,
+            underlying,
+            quote,
+            strike,
+            expiry,
+            option_type,
+        );
+
+        let metadata1 = contract.sender(Address::ZERO).get_option_metadata(token_id);
+
+        let metadata2 = contract.sender(Address::ZERO).get_option_metadata(token_id);
+
+        assert_eq!(metadata1.underlying, metadata2.underlying);
+        assert_eq!(metadata1.quote, metadata2.quote);
+        assert_eq!(metadata1.strike, metadata2.strike);
+        assert_eq!(metadata1.expiry, metadata2.expiry);
+        assert_eq!(metadata1.option_type, metadata2.option_type);
+    }
+
+    #[motsu::test]
+    fn test_different_token_ids_have_independent_metadata(contract: Contract<Options>) {
+        let token_id_1 = B256::from([0x11; 32]);
+        let token_id_2 = B256::from([0x22; 32]);
+
+        let underlying_1 = Token {
+            address: Address::from([0xAA; 20]),
+            decimals: 8,
+        };
+        let quote_1 = Token {
+            address: Address::from([0xBB; 20]),
+            decimals: 6,
+        };
+        let strike_1 = U256::from(50_000);
+        let expiry_1 = 1_700_000_000u64;
+
+        let underlying_2 = Token {
+            address: Address::from([0xCC; 20]),
+            decimals: 18,
+        };
+        let quote_2 = Token {
+            address: Address::from([0xDD; 20]),
+            decimals: 6,
+        };
+        let strike_2 = U256::from(100_000);
+        let expiry_2 = 1_800_000_000u64;
+
+        contract.sender(Address::ZERO).store_option_metadata(
+            token_id_1,
+            underlying_1,
+            quote_1,
+            strike_1,
+            expiry_1,
+            OptionType::Call,
+        );
+
+        contract.sender(Address::ZERO).store_option_metadata(
+            token_id_2,
+            underlying_2,
+            quote_2,
+            strike_2,
+            expiry_2,
+            OptionType::Put,
+        );
+
+        let metadata_1 = contract
+            .sender(Address::ZERO)
+            .get_option_metadata(token_id_1);
+
+        let metadata_2 = contract
+            .sender(Address::ZERO)
+            .get_option_metadata(token_id_2);
+
+        // Verify metadata_1
+        assert_eq!(metadata_1.underlying, underlying_1.address);
+        assert_eq!(metadata_1.strike, strike_1);
+        assert_eq!(metadata_1.option_type, 0); // Call
+
+        // Verify metadata_2
+        assert_eq!(metadata_2.underlying, underlying_2.address);
+        assert_eq!(metadata_2.strike, strike_2);
+        assert_eq!(metadata_2.option_type, 1); // Put
+
+        // Verify they're different
+        assert_ne!(metadata_1.underlying, metadata_2.underlying);
+        assert_ne!(metadata_1.strike, metadata_2.strike);
     }
 
     // Token ID Generation Tests

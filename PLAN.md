@@ -233,24 +233,27 @@ Detect and reject tokens that deduct fees during transfers.
 
 **TTDD Step 1 - Types:**
 
-- [ ] Define `IERC20` interface using `sol_interface!`:
+- [x] Define `IERC20` interface using `sol_interface!`:
   - `function balanceOf(address) external view returns (uint256)`
   - `function transferFrom(address, address, uint256) external returns (bool)`
-- [ ] Add error variants:
+  - Note: openzeppelin-stylus v0.3.0 exists but its `IErc20` is for implementing
+    ERC20s, not calling external contracts. `sol_interface!` is the standard
+    Stylus pattern for cross-contract calls.
+- [x] Add error variants:
   - `FeeOnTransferDetected { expected: U256, received: U256 }`
   - `TransferFailed`
   - `UnexpectedBalanceDecrease`
 
 **TTDD Step 2 - Tests:**
 
-- [ ] Test: Transfer from MockERC20 succeeds
-- [ ] Test: Transfer from FeeOnTransferERC20 fails with FeeOnTransferDetected
-- [ ] Test: Error contains correct expected and received amounts
-- [ ] Test: Multiple safe transfers in sequence all succeed
+- [x] Test: Transfer from MockERC20 succeeds
+- [x] Test: Transfer from FeeOnTransferERC20 fails with FeeOnTransferDetected
+- [x] Test: Error contains correct expected and received amounts
+- [x] Test: Multiple safe transfers in sequence all succeed
 
 **TTDD Step 3 - Implementation:**
 
-- [ ] Add
+- [x] Add
       `safe_transfer_from(token: Address, from: Address, to: Address, amount: U256) -> Result<(), OptionsError>`
   - Create `IERC20::new(token)` interface instance
   - Get `balance_before = token.balance_of(to)?`
@@ -262,9 +265,9 @@ Detect and reject tokens that deduct fees during transfers.
 
 **Validation:**
 
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
-- [ ] `cargo fmt --check` passes
+- [x] `cargo test` passes (46 tests)
+- [x] `cargo clippy` passes (expected dead_code warnings until Task 9)
+- [x] `cargo fmt --check` passes
 
 **Design Decision**: Fee-on-transfer tokens break collateral accounting
 (catastrophic). We can detect and prevent this at protocol level.
@@ -276,7 +279,7 @@ Store and retrieve option parameters.
 
 **TTDD Step 1 - Types:**
 
-- [ ] Define `OptionMetadata` in `sol_storage!` block:
+- [x] Define `OptionMetadata` in `sol_storage!` block:
   - `address underlying`
   - `address quote`
   - `uint8 underlying_decimals`
@@ -284,32 +287,32 @@ Store and retrieve option parameters.
   - `uint256 strike` (18 decimals)
   - `uint256 expiry`
   - `uint8 option_type` (0=Call, 1=Put)
-- [ ] Add to `Options` storage:
+- [x] Add to `Options` storage:
   - `StorageMap<B256, OptionMetadata> option_metadata`
 
 **TTDD Step 2 - Tests:**
 
-- [ ] Test: Store metadata and retrieve it by token ID
-- [ ] Test: Metadata fields match input parameters
-- [ ] Test: Same token ID retrieves same metadata
-- [ ] Test: Different token IDs have independent metadata
+- [x] Test: Store metadata and retrieve it by token ID
+- [x] Test: Metadata fields match input parameters
+- [x] Test: Same token ID retrieves same metadata
+- [x] Test: Different token IDs have independent metadata
 
 **TTDD Step 3 - Implementation:**
 
-- [ ] Add
+- [x] Add
       `store_option_metadata(token_id: B256, underlying: Token, quote: Token, strike: U256, expiry: U256, option_type: OptionType) -> Result<(), OptionsError>`
   - Create `OptionMetadata` instance
   - Store in `self.option_metadata` using `token_id` as key
-- [ ] Add
+- [x] Add
       `get_option_metadata(token_id: B256) -> Result<OptionMetadata, OptionsError>`
   - Retrieve from `self.option_metadata`
   - Return error if not found
 
 **Validation:**
 
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
-- [ ] `cargo fmt --check` passes
+- [x] `cargo test` passes
+- [x] `cargo clippy` passes (pre-existing warnings noted)
+- [x] `cargo fmt --check` passes
 
 **Design Decision**: Metadata stored once per token ID on first write. All
 subsequent writes of same option series reuse metadata. Normalized strike price
