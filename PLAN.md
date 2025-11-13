@@ -53,15 +53,15 @@ correctly.
 
 **Completion Criteria**:
 
-- [ ] Three new error variants added
-- [ ] Test: `exercise_call` returns `Unimplemented` error
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
-- [ ] `cargo fmt` passes
+- [x] Three new error variants added
+- [x] Test: `exercise_call` returns `Unimplemented` error
+- [x] `cargo test` passes
+- [x] `cargo clippy` passes
+- [x] `cargo fmt` passes
 
 ### Task 2. Implement basic exercise validation logic with tests
 
-**Implementation**: Create `validate_exercise_call()` helper function:
+**Implementation**: Create `validate_call_exercise()` helper function:
 
 - Get option metadata, return `OptionNotFound` if zero expiry (uninitialized)
 - Check `current_time < expiry`, return `ExerciseAfterExpiry` if expired
@@ -73,15 +73,15 @@ correctly.
 
 **Completion Criteria**:
 
-- [ ] `validate_exercise_call()` function implemented with all checks
-- [ ] Test: validation passes with valid inputs
-- [ ] Test: returns `OptionNotFound` for non-existent token
-- [ ] Test: returns `ExerciseAfterExpiry` when expired
-- [ ] Test: returns `WrongOptionType` for Put option
-- [ ] Test: returns `InvalidQuantity` for zero quantity
-- [ ] Test: returns `InsufficientBalance` when balance too low
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
+- [x] `validate_call_exercise()` function implemented with all checks
+- [x] Test: validation passes with valid inputs
+- [x] Test: returns `OptionNotFound` for non-existent token
+- [x] Test: returns `ExerciseAfterExpiry` when expired
+- [x] Test: returns `WrongOptionType` for Put option
+- [x] Test: returns `InvalidQuantity` for zero quantity
+- [x] Test: returns `InsufficientBalance` when balance too low
+- [x] `cargo test` passes
+- [x] `cargo clippy` passes (dead code warning until Task 5)
 
 ### Task 3. Implement position reduction helper with tests
 

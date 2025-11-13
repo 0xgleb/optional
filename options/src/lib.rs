@@ -108,6 +108,12 @@ sol! {
     error TransferFailed();
     #[derive(Debug)]
     error UnexpectedBalanceDecrease();
+    #[derive(Debug)]
+    error OptionNotFound();
+    #[derive(Debug)]
+    error ExerciseAfterExpiry(uint256 expiry, uint256 current);
+    #[derive(Debug)]
+    error WrongOptionType(uint8 expected, uint8 actual);
 }
 
 #[derive(SolidityError, Debug)]
@@ -136,6 +142,12 @@ pub enum OptionsError {
     TransferFailed(TransferFailed),
     /// Balance decreased unexpectedly.
     UnexpectedBalanceDecrease(UnexpectedBalanceDecrease),
+    /// Option token ID not found (never written).
+    OptionNotFound(OptionNotFound),
+    /// Cannot exercise option after expiry.
+    ExerciseAfterExpiry(ExerciseAfterExpiry),
+    /// Wrong option type for this exercise function.
+    WrongOptionType(WrongOptionType),
 }
 
 sol_storage! {
@@ -838,6 +850,69 @@ impl Options {
             position.quantity_written.get(),
             position.collateral_locked.get(),
         )
+    }
+
+    /// Validates preconditions for exercising a call option.
+    ///
+    /// Performs comprehensive validation before exercise execution:
+    /// - Option exists (has been written)
+    /// - Not expired
+    /// - Is a call option
+    /// - Non-zero quantity
+    /// - Holder has sufficient option tokens
+    ///
+    /// # Parameters
+    /// - `holder`: Address attempting to exercise
+    /// - `token_id`: ERC-1155 token ID of the option
+    /// - `quantity`: Amount to exercise
+    /// - `current_time`: Current block timestamp
+    ///
+    /// # Errors
+    /// - `OptionNotFound`: Token ID has no metadata (never written)
+    /// - `ExerciseAfterExpiry`: Current time >= expiry
+    /// - `WrongOptionType`: Option is not a call (is a put)
+    /// - `InvalidQuantity`: Quantity is zero
+    /// - `InsufficientBalance`: Holder doesn't have enough option tokens
+    pub(crate) fn validate_call_exercise(
+        &self,
+        holder: Address,
+        token_id: B256,
+        quantity: U256,
+        current_time: u64,
+    ) -> Result<(), OptionsError> {
+        let metadata = self.get_option_metadata(token_id);
+        if metadata.expiry.is_zero() {
+            return Err(OptionsError::OptionNotFound(OptionNotFound {}));
+        }
+
+        let expiry = metadata.expiry.to::<u64>();
+        if current_time >= expiry {
+            return Err(OptionsError::ExerciseAfterExpiry(ExerciseAfterExpiry {
+                expiry: metadata.expiry,
+                current: U256::from(current_time),
+            }));
+        }
+
+        if metadata.option_type != 0 {
+            return Err(OptionsError::WrongOptionType(WrongOptionType {
+                expected: 0,
+                actual: metadata.option_type,
+            }));
+        }
+
+        if quantity.is_zero() {
+            return Err(OptionsError::InvalidQuantity(InvalidQuantity {}));
+        }
+
+        let holder_balance = self.balance_of(holder, token_id);
+        if holder_balance < quantity {
+            return Err(OptionsError::InsufficientBalance(InsufficientBalance {
+                available: holder_balance,
+                requested: quantity,
+            }));
+        }
+
+        Ok(())
     }
 }
 
@@ -1958,6 +2033,242 @@ mod tests {
             .sender(alice)
             .withdraw_expired_collateral(B256::ZERO, U256::from(10));
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_with_valid_inputs(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x41; 32]);
+        let quantity = U256::from(100);
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            2_000_000_000u64,
+            OptionType::Call,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, quantity)
+            .unwrap();
+
+        let current_time = 1_900_000_000u64;
+        let result =
+            contract
+                .sender(alice)
+                .validate_call_exercise(alice, token_id, quantity, current_time);
+
+        assert!(result.is_ok());
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_option_not_found(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let non_existent_token = B256::from([0x99; 32]);
+        let quantity = U256::from(100);
+        let current_time = 1_900_000_000u64;
+
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            non_existent_token,
+            quantity,
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::OptionNotFound(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_after_expiry(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x43; 32]);
+        let expiry = 2_000_000_000u64;
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            expiry,
+            OptionType::Call,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, U256::from(100))
+            .unwrap();
+
+        let current_time = expiry + 1;
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            token_id,
+            U256::from(50),
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::ExerciseAfterExpiry(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_at_exact_expiry(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x44; 32]);
+        let expiry = 2_000_000_000u64;
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            expiry,
+            OptionType::Call,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, U256::from(100))
+            .unwrap();
+
+        let current_time = expiry;
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            token_id,
+            U256::from(50),
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::ExerciseAfterExpiry(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_wrong_option_type(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x42; 32]);
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            2_000_000_000u64,
+            OptionType::Put,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, U256::from(100))
+            .unwrap();
+
+        let current_time = 1_900_000_000u64;
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            token_id,
+            U256::from(50),
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::WrongOptionType(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_zero_quantity(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x45; 32]);
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            2_000_000_000u64,
+            OptionType::Call,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, U256::from(100))
+            .unwrap();
+
+        let current_time = 1_900_000_000u64;
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            token_id,
+            U256::ZERO,
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::InvalidQuantity(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_insufficient_balance(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x46; 32]);
+        let balance = U256::from(100);
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            2_000_000_000u64,
+            OptionType::Call,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, balance)
+            .unwrap();
+
+        let current_time = 1_900_000_000u64;
+        let excessive_quantity = balance.checked_add(U256::from(1)).unwrap();
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            token_id,
+            excessive_quantity,
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::InsufficientBalance(_))));
     }
 }
 
