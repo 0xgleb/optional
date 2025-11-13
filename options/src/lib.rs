@@ -30,6 +30,14 @@ sol! {
         uint256 expiry;
         uint8 option_type;
     }
+
+    /// Emitted when an option is written.
+    event OptionWritten(
+        address indexed writer,
+        bytes32 indexed tokenId,
+        uint256 quantity,
+        uint256 collateral
+    );
 }
 
 // Implement AbiType for Token to make it usable in #[public] functions
@@ -177,7 +185,7 @@ sol_storage! {
 /// - `underlying`: Address of the underlying token
 /// - `quote`: Address of the quote token
 /// - `strike`: Strike price (18 decimals normalized)
-/// - `expiry`: Expiration timestamp
+/// - `expiry`: Expiration timestamp (Unix seconds)
 /// - `option_type`: Call or Put
 ///
 /// # Returns
@@ -186,14 +194,14 @@ pub(crate) fn generate_token_id(
     underlying: Address,
     quote: Address,
     strike: U256,
-    expiry: U256,
+    expiry: u64,
     option_type: OptionType,
 ) -> B256 {
     let encoded = [
         underlying.as_slice(),
         quote.as_slice(),
         strike.to_be_bytes::<32>().as_slice(),
-        expiry.to_be_bytes::<32>().as_slice(),
+        &expiry.to_be_bytes(),
         &[option_type.to_u8()],
     ]
     .concat();
@@ -250,6 +258,7 @@ pub(crate) fn normalize_amount(amount: U256, from_decimals: u8) -> Result<U256, 
 /// # Errors
 /// - `InvalidDecimals`: If `to_decimals > 18`
 /// - `NormalizationOverflow`: If scale factor calculation would overflow
+#[allow(dead_code)] // TODO: Remove when used in Issue #6 (Exercise)
 pub(crate) fn denormalize_amount(amount: U256, to_decimals: u8) -> Result<U256, OptionsError> {
     if to_decimals > 18 {
         return Err(OptionsError::InvalidDecimals(InvalidDecimals {
@@ -326,23 +335,83 @@ impl Options {
     ///
     /// # Parameters
     /// - `strike`: Strike price (18 decimals normalized)
-    /// - `expiry`: Expiration timestamp
-    /// - `quantity`: Quantity of options to write
+    /// - `expiry`: Expiration timestamp (Unix seconds)
+    /// - `quantity`: Quantity of options to write (in underlying token's native decimals)
     /// - `underlying`: Underlying token (address and decimals)
     /// - `quote`: Quote token (address and decimals)
     ///
+    /// # Returns
+    /// Token ID (B256) representing this option series
+    ///
     /// # Errors
-    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    /// - `InvalidStrike`: Strike price is zero
+    /// - `ExpiredOption`: Expiry is not in the future
+    /// - `InvalidQuantity`: Quantity is zero
+    /// - `SameToken`: Underlying and quote addresses are identical
+    /// - `InvalidDecimals`: Token decimals exceed 18
+    /// - `NormalizationOverflow`: Amount normalization would overflow
+    /// - `Overflow`: Position or balance accumulation would overflow
+    /// - `FeeOnTransferDetected`: Underlying token deducts fees during transfer
+    /// - `TransferFailed`: ERC20 transfer failed
     pub fn write_call_option(
         &mut self,
         strike: U256,
-        expiry: U256,
+        expiry: u64,
         quantity: U256,
         underlying: Token,
         quote: Token,
     ) -> Result<B256, OptionsError> {
-        let _ = (strike, expiry, quantity, underlying, quote);
-        Err(OptionsError::Unimplemented(Unimplemented {}))
+        let (current_timestamp, sender, contract_addr) = {
+            let vm = self.vm();
+            (vm.block_timestamp(), vm.msg_sender(), vm.contract_address())
+        };
+
+        validate_write_params(
+            strike,
+            expiry,
+            quantity,
+            underlying,
+            quote,
+            current_timestamp,
+        )?;
+
+        let token_id = generate_token_id(
+            underlying.address,
+            quote.address,
+            strike,
+            expiry,
+            OptionType::Call,
+        );
+
+        let normalized_quantity = normalize_amount(quantity, underlying.decimals)?;
+
+        self.store_option_metadata(
+            token_id,
+            underlying,
+            quote,
+            strike,
+            expiry,
+            OptionType::Call,
+        );
+
+        self.create_or_update_position(sender, token_id, normalized_quantity, normalized_quantity)?;
+
+        self._mint(sender, token_id, normalized_quantity)?;
+
+        // External call after all state updates (reentrancy protection)
+        self.safe_transfer_from(underlying.address, sender, contract_addr, quantity)?;
+
+        log(
+            self.vm(),
+            OptionWritten {
+                writer: sender,
+                tokenId: token_id,
+                quantity: normalized_quantity,
+                collateral: normalized_quantity,
+            },
+        );
+
+        Ok(token_id)
     }
 
     /// Writes a put option by locking quote tokens as collateral (strike * quantity).
@@ -352,7 +421,7 @@ impl Options {
     ///
     /// # Parameters
     /// - `strike`: Strike price (18 decimals normalized)
-    /// - `expiry`: Expiration timestamp
+    /// - `expiry`: Expiration timestamp (Unix seconds)
     /// - `quantity`: Quantity of options to write
     /// - `underlying`: Underlying token (address and decimals)
     /// - `quote`: Quote token (address and decimals)
@@ -362,7 +431,7 @@ impl Options {
     pub fn write_put_option(
         &mut self,
         strike: U256,
-        expiry: U256,
+        expiry: u64,
         quantity: U256,
         underlying: Token,
         quote: Token,
@@ -573,6 +642,7 @@ impl Options {
     ///
     /// # Returns
     /// Token balance (0 if no balance exists)
+    #[allow(dead_code)] // TODO: Remove when used in Issue #11 (Full ERC-1155)
     pub(crate) fn balance_of(&self, owner: Address, token_id: B256) -> U256 {
         let key = Self::balance_key(owner, token_id);
         self.balances.get(key)
@@ -585,6 +655,7 @@ impl Options {
     ///
     /// # Returns
     /// Total supply (0 if no tokens minted)
+    #[allow(dead_code)] // TODO: Remove when used in Issue #11 (Full ERC-1155)
     pub(crate) fn total_supply_of(&self, token_id: B256) -> U256 {
         self.total_supply.get(token_id)
     }
@@ -685,6 +756,7 @@ impl Options {
     ///
     /// # Returns
     /// Option metadata struct with all option parameters
+    #[allow(dead_code)] // TODO: Remove when used in Issue #6 (Exercise)
     pub(crate) fn get_option_metadata(&self, token_id: B256) -> OptionMetadataView {
         let metadata = self.option_metadata.get(token_id);
         OptionMetadataView {
@@ -754,6 +826,7 @@ impl Options {
     ///
     /// # Returns
     /// Tuple of (quantity_written, collateral_locked)
+    #[allow(dead_code)] // TODO: Remove when used in Issue #7 (Withdraw Collateral)
     pub(crate) fn get_position(&self, writer: Address, token_id: B256) -> (U256, U256) {
         let key = Self::position_key(writer, token_id);
         let position = self.positions.get(key);
@@ -1740,7 +1813,7 @@ mod tests {
         let underlying = Address::from([0x11; 20]);
         let quote = Address::from([0x22; 20]);
         let strike = U256::from(100_000);
-        let expiry = U256::from(1_700_000_000);
+        let expiry = 1_700_000_000u64;
         let option_type = OptionType::Call;
 
         let token_id_1 = generate_token_id(underlying, quote, strike, expiry, option_type);
@@ -1753,7 +1826,7 @@ mod tests {
     fn test_generate_token_id_different_strikes() {
         let underlying = Address::from([0x11; 20]);
         let quote = Address::from([0x22; 20]);
-        let expiry = U256::from(1_700_000_000);
+        let expiry = 1_700_000_000u64;
         let option_type = OptionType::Call;
 
         let token_id_1 =
@@ -1771,20 +1844,10 @@ mod tests {
         let strike = U256::from(100_000);
         let option_type = OptionType::Call;
 
-        let token_id_1 = generate_token_id(
-            underlying,
-            quote,
-            strike,
-            U256::from(1_700_000_000),
-            option_type,
-        );
-        let token_id_2 = generate_token_id(
-            underlying,
-            quote,
-            strike,
-            U256::from(1_800_000_000),
-            option_type,
-        );
+        let token_id_1 =
+            generate_token_id(underlying, quote, strike, 1_700_000_000u64, option_type);
+        let token_id_2 =
+            generate_token_id(underlying, quote, strike, 1_800_000_000u64, option_type);
 
         assert_ne!(token_id_1, token_id_2);
     }
@@ -1794,7 +1857,7 @@ mod tests {
         let underlying = Address::from([0x11; 20]);
         let quote = Address::from([0x22; 20]);
         let strike = U256::from(100_000);
-        let expiry = U256::from(1_700_000_000);
+        let expiry = 1_700_000_000u64;
 
         let token_id_call = generate_token_id(underlying, quote, strike, expiry, OptionType::Call);
         let token_id_put = generate_token_id(underlying, quote, strike, expiry, OptionType::Put);
@@ -1806,7 +1869,7 @@ mod tests {
     fn test_generate_token_id_different_underlying() {
         let quote = Address::from([0x22; 20]);
         let strike = U256::from(100_000);
-        let expiry = U256::from(1_700_000_000);
+        let expiry = 1_700_000_000u64;
         let option_type = OptionType::Call;
 
         let token_id_1 = generate_token_id(
@@ -1831,7 +1894,7 @@ mod tests {
     fn test_generate_token_id_different_quote() {
         let underlying = Address::from([0x11; 20]);
         let strike = U256::from(100_000);
-        let expiry = U256::from(1_700_000_000);
+        let expiry = 1_700_000_000u64;
         let option_type = OptionType::Call;
 
         let token_id_1 = generate_token_id(
@@ -1853,25 +1916,109 @@ mod tests {
     }
 
     #[motsu::test]
-    fn test_write_call_option_returns_unimplemented(contract: Contract<Options>, alice: Address) {
+    fn test_write_call_option_zero_strike_fails(contract: Contract<Options>, alice: Address) {
         let underlying = Token {
-            address: Address::ZERO,
-            decimals: 18,
+            address: Address::from([0x11; 20]),
+            decimals: 8,
         };
         let quote = Token {
-            address: Address::ZERO,
+            address: Address::from([0x22; 20]),
             decimals: 6,
         };
+        let strike = U256::ZERO;
+        let expiry = 2_000_000_000u64;
+        let quantity = U256::from(100_000_000);
 
-        let result = contract.sender(alice).write_call_option(
-            U256::from(1000),
-            U256::from(1_234_567_890),
-            U256::from(100),
-            underlying,
-            quote,
-        );
+        let result = contract
+            .sender(alice)
+            .write_call_option(strike, expiry, quantity, underlying, quote);
 
-        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+        assert!(matches!(result, Err(OptionsError::InvalidStrike(_))));
+    }
+
+    #[motsu::test]
+    fn test_write_call_option_expired_option_fails(contract: Contract<Options>, alice: Address) {
+        let underlying = Token {
+            address: Address::from([0x11; 20]),
+            decimals: 8,
+        };
+        let quote = Token {
+            address: Address::from([0x22; 20]),
+            decimals: 6,
+        };
+        let strike = U256::from(60_000) * U256::from(10).pow(U256::from(18));
+        let expiry = 1_000_000_000u64;
+        let quantity = U256::from(100_000_000);
+
+        let result = contract
+            .sender(alice)
+            .write_call_option(strike, expiry, quantity, underlying, quote);
+
+        assert!(matches!(result, Err(OptionsError::ExpiredOption(_))));
+    }
+
+    #[motsu::test]
+    fn test_write_call_option_zero_quantity_fails(contract: Contract<Options>, alice: Address) {
+        let underlying = Token {
+            address: Address::from([0x11; 20]),
+            decimals: 8,
+        };
+        let quote = Token {
+            address: Address::from([0x22; 20]),
+            decimals: 6,
+        };
+        let strike = U256::from(60_000) * U256::from(10).pow(U256::from(18));
+        let expiry = 2_000_000_000u64;
+        let quantity = U256::ZERO;
+
+        let result = contract
+            .sender(alice)
+            .write_call_option(strike, expiry, quantity, underlying, quote);
+
+        assert!(matches!(result, Err(OptionsError::InvalidQuantity(_))));
+    }
+
+    #[motsu::test]
+    fn test_write_call_option_same_token_fails(contract: Contract<Options>, alice: Address) {
+        let same_address = Address::from([0x11; 20]);
+        let underlying = Token {
+            address: same_address,
+            decimals: 8,
+        };
+        let quote = Token {
+            address: same_address,
+            decimals: 6,
+        };
+        let strike = U256::from(60_000) * U256::from(10).pow(U256::from(18));
+        let expiry = 2_000_000_000u64;
+        let quantity = U256::from(100_000_000);
+
+        let result = contract
+            .sender(alice)
+            .write_call_option(strike, expiry, quantity, underlying, quote);
+
+        assert!(matches!(result, Err(OptionsError::SameToken(_))));
+    }
+
+    #[motsu::test]
+    fn test_write_call_option_invalid_decimals_fails(contract: Contract<Options>, alice: Address) {
+        let underlying = Token {
+            address: Address::from([0x11; 20]),
+            decimals: 24,
+        };
+        let quote = Token {
+            address: Address::from([0x22; 20]),
+            decimals: 6,
+        };
+        let strike = U256::from(60_000) * U256::from(10).pow(U256::from(18));
+        let expiry = 2_000_000_000u64;
+        let quantity = U256::from(100_000_000);
+
+        let result = contract
+            .sender(alice)
+            .write_call_option(strike, expiry, quantity, underlying, quote);
+
+        assert!(matches!(result, Err(OptionsError::InvalidDecimals(_))));
     }
 
     #[motsu::test]
@@ -1887,7 +2034,7 @@ mod tests {
 
         let result = contract.sender(alice).write_put_option(
             U256::from(1000),
-            U256::from(1_234_567_890),
+            1_234_567_890u64,
             U256::from(100),
             underlying,
             quote,

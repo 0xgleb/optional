@@ -364,14 +364,14 @@ Complete call option writing with collateral transfer.
 
 **TTDD Step 1 - Types:**
 
-- [ ] Define events in `sol!` block:
+- [x] Define events in `sol!` block:
   - `event OptionWritten(address indexed writer, bytes32 indexed tokenId, uint256 quantity, uint256 collateral)`
 
 **TTDD Step 2 - Tests:**
 
 _Success Cases:_
 
-- [ ] Test: Write 1 WBTC call (8 decimals) succeeds
+- [x] Test: Write 1 WBTC call (8 decimals) succeeds
   - Verify token ID returned
   - Verify writer balance increased
   - Verify total supply increased
@@ -379,26 +379,26 @@ _Success Cases:_
   - Verify metadata stored
   - Verify collateral transferred
   - Verify event emitted
-- [ ] Test: Write same option twice increases position
-- [ ] Test: Different writers same option create separate positions
-- [ ] Test: Write different options creates different token IDs
+- [x] Test: Write same option twice increases position
+- [x] Test: Different writers same option create separate positions
+- [x] Test: Write different options creates different token IDs
 
 _Failure Cases:_
 
-- [ ] Test: Invalid parameters fail validation (reuse Task 5 tests)
-- [ ] Test: Fee-on-transfer token fails (reuse Task 6 tests)
-- [ ] Test: Insufficient ERC20 balance fails
-- [ ] Test: No ERC20 approval fails
+- [x] Test: Invalid parameters fail validation (reuse Task 5 tests)
+- [x] Test: Fee-on-transfer token fails (reuse Task 6 tests)
+- [x] Test: Insufficient ERC20 balance fails
+- [x] Test: No ERC20 approval fails
 
 _Edge Cases:_
 
-- [ ] Test: Minimum values (quantity=1, strike=1)
-- [ ] Test: Large values (near U256::MAX, should handle or error gracefully)
-- [ ] Test: Various decimals (0, 6, 8, 18)
+- [x] Test: Minimum values (quantity=1, strike=1)
+- [x] Test: Large values (near U256::MAX, should handle or error gracefully)
+- [x] Test: Various decimals (0, 6, 8, 18)
 
 **TTDD Step 3 - Implementation:**
 
-- [ ] Replace stub in `write_call_option()`
+- [x] Replace stub in `write_call_option()`
   - **Step 1 - Checks:**
     - Call `validate_write_params(strike, expiry, quantity, underlying, quote)?`
   - **Step 2 - Effects:**
@@ -421,10 +421,10 @@ _Edge Cases:_
 
 **Validation:**
 
-- [ ] `cargo test` passes all tests
-- [ ] `cargo clippy` passes
-- [ ] `cargo fmt --check` passes
-- [ ] `cargo build --target wasm32-unknown-unknown --release` succeeds
+- [x] `cargo test` passes all tests
+- [x] `cargo clippy` passes
+- [x] `cargo fmt --check` passes
+- [x] `cargo build --target wasm32-unknown-unknown --release` succeeds
 
 **Design Decision**: Strict checks-effects-interactions pattern prevents
 reentrancy. All state updates before external calls. Events provide off-chain
