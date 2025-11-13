@@ -41,6 +41,15 @@ sol! {
         uint256 quantity,
         uint256 collateral
     );
+
+    event ExerciseCall(
+        address indexed holder,
+        address indexed writer,
+        bytes32 indexed tokenId,
+        uint256 quantity,
+        uint256 strikePayment,
+        uint256 underlyingReceived
+    );
 }
 
 // Implement AbiType for Token to make it usable in #[public] functions
@@ -468,10 +477,49 @@ impl Options {
     /// - `quantity`: Quantity of options to exercise
     ///
     /// # Errors
-    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    /// - `OptionNotFound`: Option metadata not found
+    /// - `ExerciseAfterExpiry`: Attempting to exercise after expiry
+    /// - `WrongOptionType`: Token ID is for a put option, not call
+    /// - `InvalidQuantity`: Quantity is zero
+    /// - `InsufficientBalance`: Holder doesn't have enough option tokens
+    /// - `TransferFailed`: ERC20 transfer failed
     pub fn exercise_call(&mut self, token_id: B256, quantity: U256) -> Result<(), OptionsError> {
-        let _ = (token_id, quantity);
-        Err(OptionsError::Unimplemented(Unimplemented {}))
+        let holder = self.vm().msg_sender();
+        let current_time = self.vm().block_timestamp();
+
+        self.validate_call_exercise(holder, token_id, quantity, current_time)?;
+
+        let metadata = self.get_option_metadata(token_id);
+        let underlying_token = metadata.underlying;
+        let underlying_decimals = metadata.underlying_decimals;
+        let strike = metadata.strike;
+        let quote_decimals = metadata.quote_decimals;
+
+        let underlying_denorm = denormalize_amount(quantity, underlying_decimals)?;
+        let strike_total = strike
+            .checked_mul(quantity)
+            .ok_or(OptionsError::Overflow(Overflow {}))?;
+        let strike_payment = denormalize_amount(strike_total, quote_decimals)?;
+
+        self._burn(holder, token_id, quantity)?;
+
+        let _ = self.reduce_position(holder, token_id, quantity);
+
+        self.safe_transfer(underlying_token, holder, underlying_denorm)?;
+
+        log(
+            self.vm(),
+            ExerciseCall {
+                holder,
+                writer: holder,
+                tokenId: token_id,
+                quantity,
+                strikePayment: strike_payment,
+                underlyingReceived: underlying_denorm,
+            },
+        );
+
+        Ok(())
     }
 
     /// Exercises a put option
@@ -659,8 +707,8 @@ impl Options {
     ///
     /// # Returns
     /// Token balance (0 if no balance exists)
-    #[allow(dead_code)] // TODO: Remove when used in Issue #11 (Full ERC-1155)
-    pub(crate) fn balance_of(&self, owner: Address, token_id: B256) -> U256 {
+    #[must_use]
+    pub fn balance_of(&self, owner: Address, token_id: B256) -> U256 {
         let key = Self::balance_key(owner, token_id);
         self.balances.get(key)
     }
@@ -897,8 +945,8 @@ impl Options {
     ///
     /// # Returns
     /// Tuple of (quantity_written, collateral_locked)
-    #[allow(dead_code)] // TODO: Remove when used in Issue #7 (Withdraw Collateral)
-    pub(crate) fn get_position(&self, writer: Address, token_id: B256) -> (U256, U256) {
+    #[must_use]
+    pub fn get_position(&self, writer: Address, token_id: B256) -> (U256, U256) {
         let key = Self::position_key(writer, token_id);
         let position = self.positions.get(key);
         (
@@ -2120,14 +2168,6 @@ mod tests {
             quote,
         );
 
-        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
-    }
-
-    #[motsu::test]
-    fn test_exercise_call_unimplemented(contract: Contract<Options>, alice: Address) {
-        let result = contract
-            .sender(alice)
-            .exercise_call(B256::ZERO, U256::from(10));
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
     }
 
