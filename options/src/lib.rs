@@ -914,6 +914,65 @@ impl Options {
 
         Ok(())
     }
+
+    /// Reduces a writer's position for an option series.
+    ///
+    /// Decreases both the quantity written and collateral locked proportionally.
+    /// Used when options are exercised or burned.
+    ///
+    /// # Parameters
+    /// - `writer`: Address of the position owner
+    /// - `token_id`: ERC-1155 token ID of the option
+    /// - `quantity`: Amount to reduce the position by
+    ///
+    /// # Errors
+    /// - `InsufficientBalance`: Position quantity less than requested reduction
+    /// - `Overflow`: Arithmetic overflow during calculation (should never occur with valid inputs)
+    pub(crate) fn reduce_position(
+        &mut self,
+        writer: Address,
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let key = Self::position_key(writer, token_id);
+        let position = self.positions.get(key);
+
+        let current_quantity = position.quantity_written.get();
+        let current_collateral = position.collateral_locked.get();
+
+        if current_quantity < quantity {
+            return Err(OptionsError::InsufficientBalance(InsufficientBalance {
+                available: current_quantity,
+                requested: quantity,
+            }));
+        }
+
+        let new_quantity = current_quantity
+            .checked_sub(quantity)
+            .ok_or(OptionsError::Overflow(Overflow {}))?;
+
+        let collateral_per_unit = if current_quantity.is_zero() {
+            U256::ZERO
+        } else {
+            current_collateral
+                .checked_div(current_quantity)
+                .ok_or(OptionsError::Overflow(Overflow {}))?
+        };
+
+        let collateral_to_reduce = collateral_per_unit
+            .checked_mul(quantity)
+            .ok_or(OptionsError::Overflow(Overflow {}))?;
+
+        let new_collateral = current_collateral
+            .checked_sub(collateral_to_reduce)
+            .ok_or(OptionsError::Overflow(Overflow {}))?;
+
+        let mut position = self.positions.setter(key);
+        position.quantity_written.set(new_quantity);
+        position.collateral_locked.set(new_collateral);
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -2269,6 +2328,94 @@ mod tests {
         );
 
         assert!(matches!(result, Err(OptionsError::InsufficientBalance(_))));
+    }
+
+    #[motsu::test]
+    fn test_reduce_position_successfully(contract: Contract<Options>) {
+        let writer = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x50; 32]);
+        let initial_quantity = U256::from(1000);
+        let initial_collateral = U256::from(5000);
+        let reduction = U256::from(300);
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, initial_quantity, initial_collateral)
+            .unwrap();
+
+        let result = contract
+            .sender(writer)
+            .reduce_position(writer, token_id, reduction);
+
+        assert!(result.is_ok());
+
+        let (quantity, collateral) = contract.sender(writer).get_position(writer, token_id);
+        assert_eq!(quantity, U256::from(700));
+        assert_eq!(collateral, U256::from(3500));
+    }
+
+    #[motsu::test]
+    fn test_reduce_position_to_zero(contract: Contract<Options>) {
+        let writer = Address::from([0xBB; 20]);
+        let token_id = B256::from([0x51; 32]);
+        let quantity = U256::from(100);
+        let collateral = U256::from(500);
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, quantity, collateral)
+            .unwrap();
+
+        let result = contract
+            .sender(writer)
+            .reduce_position(writer, token_id, quantity);
+
+        assert!(result.is_ok());
+
+        let (new_quantity, new_collateral) = contract.sender(writer).get_position(writer, token_id);
+        assert_eq!(new_quantity, U256::ZERO);
+        assert_eq!(new_collateral, U256::ZERO);
+    }
+
+    #[motsu::test]
+    fn test_reduce_position_insufficient_quantity(contract: Contract<Options>) {
+        let writer = Address::from([0xCC; 20]);
+        let token_id = B256::from([0x52; 32]);
+        let quantity = U256::from(100);
+        let collateral = U256::from(500);
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, quantity, collateral)
+            .unwrap();
+
+        let result = contract
+            .sender(writer)
+            .reduce_position(writer, token_id, U256::from(101));
+
+        assert!(matches!(result, Err(OptionsError::InsufficientBalance(_))));
+    }
+
+    #[motsu::test]
+    fn test_reduce_position_maintains_collateral_ratio(contract: Contract<Options>) {
+        let writer = Address::from([0xDD; 20]);
+        let token_id = B256::from([0x53; 32]);
+        let initial_quantity = U256::from(1000);
+        let initial_collateral = U256::from(10_000);
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, initial_quantity, initial_collateral)
+            .unwrap();
+
+        contract
+            .sender(writer)
+            .reduce_position(writer, token_id, U256::from(250))
+            .unwrap();
+
+        let (quantity, collateral) = contract.sender(writer).get_position(writer, token_id);
+        assert_eq!(quantity, U256::from(750));
+        assert_eq!(collateral, U256::from(7500));
     }
 }
 

@@ -97,13 +97,13 @@ correctly.
 
 **Completion Criteria**:
 
-- [ ] `reduce_position()` function implemented
-- [ ] Test: successfully reduces position with sufficient quantity
-- [ ] Test: returns error when position insufficient
-- [ ] Test: position values updated correctly after reduction
-- [ ] Test: reduces position to zero when quantity matches
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` passes
+- [x] `reduce_position()` function implemented
+- [x] Test: successfully reduces position with sufficient quantity
+- [x] Test: returns error when position insufficient
+- [x] Test: position values updated correctly after reduction
+- [x] Test: reduces position to zero when quantity matches
+- [x] `cargo test` passes (77 tests)
+- [x] `cargo clippy` passes (dead code warnings until Task 5)
 
 ### Task 4. Implement safe transfer helper with tests
 
