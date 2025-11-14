@@ -49,6 +49,27 @@ jobs:
       - name: Run tests
         run: nix develop --impure -c bash -c "cd clob && cargo test"
 
+  test-vault:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 10G
+
+      - name: Run tests
+        run: nix develop --impure -c bash -c "cd vault && cargo test"
+
   static-options:
     runs-on: ubuntu-latest
     steps:
@@ -102,3 +123,30 @@ jobs:
 
       - name: Build WASM
         run: nix develop --impure -c bash -c "cd clob && cargo build --target wasm32-unknown-unknown --release"
+
+  static-vault:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: |
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 10G
+
+      - name: Check formatting
+        run: nix develop --impure -c bash -c "cd vault && cargo fmt --all -- --check"
+
+      - name: Run clippy
+        run: nix develop --impure -c bash -c "cd vault && cargo clippy --all-targets -- -D clippy::all -D warnings"
+
+      - name: Build WASM
+        run: nix develop --impure -c bash -c "cd vault && cargo build --target wasm32-unknown-unknown --release"
