@@ -120,9 +120,9 @@ impl OptionVault {
     }
 }
 
-#[public]
+#[constructor]
 impl OptionVault {
-    /// Initializes the vault with the asset token and hardcoded inflation protection.
+    /// Constructor called once during deployment.
     ///
     /// # Arguments
     /// * `asset` - The ERC20 token used as collateral
@@ -131,15 +131,16 @@ impl OptionVault {
     /// * `expiry` - The option expiry timestamp
     ///
     /// # Security
-    /// Hardcodes `decimals_offset=3` for ERC-4626 inflation attack protection.
-    /// This provides a 1000x security multiplier without requiring pricing oracles.
-    pub fn initialize(
+    /// - Can only be called once (enforced by Stylus SDK)
+    /// - Hardcodes `decimals_offset=3` for ERC-4626 inflation attack protection
+    /// - Provides 1000x security multiplier without requiring pricing oracles
+    pub fn constructor(
         &mut self,
         asset: Address,
         options_contract: Address,
         token_id: B256,
         expiry: U256,
-    ) -> Result<(), Vec<u8>> {
+    ) {
         // Store asset
         self.asset.set(asset);
 
@@ -158,10 +159,11 @@ impl OptionVault {
         self.checkpoint_count.set(U256::ZERO);
         self.total_exercised.set(U256::ZERO);
         self.total_assets.set(U256::ZERO);
-
-        Ok(())
     }
+}
 
+#[public]
+impl OptionVault {
     /// Deposits assets into the vault and mints shares to receiver.
     /// Creates a checkpoint for FIFO assignment tracking.
     ///
@@ -325,18 +327,6 @@ impl From<VaultError> for Vec<u8> {
 mod tests {
     use super::*;
     use motsu::prelude::*;
-
-    #[motsu::test]
-    fn initialize_sets_decimals_offset_to_three(contract: OptionVault) {
-        let asset = Address::ZERO;
-        let options_contract = Address::ZERO;
-        let token_id = B256::ZERO;
-        let expiry = U256::from(1000);
-
-        let result = contract.initialize(asset, options_contract, token_id, expiry);
-        assert!(result.is_ok());
-        assert_eq!(contract.decimals_offset(), 3);
-    }
 
     #[motsu::test]
     fn deposit_returns_unimplemented(contract: OptionVault) {
