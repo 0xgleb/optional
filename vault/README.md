@@ -38,21 +38,21 @@ The OptionVault contract is a critical component of the options trading system. 
 All core functions return `Unimplemented` error. Full implementation pending.
 
 ### Implemented
-- ✅ Storage structure with FIFO checkpoint tracking
-- ✅ Error types for validation
-- ✅ Event definitions
-- ✅ Public interface signatures
-- ✅ View functions for checkpoint data
-- ✅ Basic test coverage for stubs
+- [x] Storage structure with FIFO checkpoint tracking
+- [x] Error types for validation
+- [x] Event definitions
+- [x] Public interface signatures
+- [x] View functions for checkpoint data
+- [x] Basic test coverage for stubs
 
 ### TODO
-- ⏳ `deposit()` - Create checkpoints, mint shares
-- ⏳ `exercise_withdraw()` - Reduce assets on exercise
-- ⏳ `claim()` - Calculate FIFO assignment, distribute strike/collateral
-- ⏳ `burn_shares_with_options()` - Early redemption path
-- ⏳ ERC-4626 standard function implementations
-- ⏳ Comprehensive test coverage
-- ⏳ Integration tests with OptionToken contract
+- [ ] `deposit()` - Create checkpoints, mint shares
+- [ ] `exercise_withdraw()` - Reduce assets on exercise
+- [ ] `claim()` - Calculate FIFO assignment, distribute strike/collateral
+- [ ] `burn_shares_with_options()` - Early redemption path
+- [ ] ERC-4626 standard function implementations
+- [ ] Comprehensive test coverage
+- [ ] Integration tests with OptionToken contract
 
 ## Security Considerations
 
