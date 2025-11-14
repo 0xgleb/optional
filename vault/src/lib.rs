@@ -286,8 +286,7 @@ impl OptionVault {
     /// # Returns
     /// Checkpoint data (writer, amount, cumulative_total)
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn get_checkpoint(&self, _index: U256) -> (Address, U256, U256) {
+    pub const fn get_checkpoint(&self, _index: U256) -> (Address, U256, U256) {
         (Address::ZERO, U256::ZERO, U256::ZERO)
     }
 
@@ -301,9 +300,8 @@ impl OptionVault {
     /// # Returns
     /// Array of checkpoint indices
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn get_writer_checkpoints(&self, _writer: Address) -> Vec<U256> {
-        vec![]
+    pub const fn get_writer_checkpoints(&self, _writer: Address) -> Vec<U256> {
+        Vec::new()
     }
 }
 
