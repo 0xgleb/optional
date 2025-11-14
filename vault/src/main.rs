@@ -1,7 +1,10 @@
-#![cfg_attr(not(feature = "export-abi"), no_main)]
-extern crate alloc;
+#![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
 
-#[global_allocator]
-static ALLOC: mini_alloc::MiniAlloc = mini_alloc::MiniAlloc::INIT;
+#[cfg(not(any(test, feature = "export-abi")))]
+#[no_mangle]
+pub const extern "C" fn main() {}
 
-fn main() {}
+#[cfg(feature = "export-abi")]
+fn main() {
+    vault::print_abi_from_args();
+}
