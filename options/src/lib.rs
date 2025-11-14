@@ -503,6 +503,7 @@ impl Options {
     /// let exercise_qty = U256::from(50) * U256::from(10).pow(U256::from(18));
     /// contract.exercise_call(token_id, exercise_qty)?;
     /// ```
+    #[allow(deprecated)]
     pub fn exercise_call(&mut self, token_id: B256, quantity: U256) -> Result<(), OptionsError> {
         let holder = self.vm().msg_sender();
         let current_time = self.vm().block_timestamp();
