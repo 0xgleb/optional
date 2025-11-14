@@ -20,7 +20,7 @@ alloy-primitives = { version = "=0.8.20", features = [
   "arbitrary",
 ] }
 arbitrary = { version = "1.4", features = ["derive"] }
-tokio = { version = "1.48.0", features = ["full"] }
+tokio = { version = "1.12.0", features = ["full"] }
 ethers = "2.0"
 eyre = "0.6.8"
 stylus-sdk = { version = "0.9.0", features = ["stylus-test"] }
