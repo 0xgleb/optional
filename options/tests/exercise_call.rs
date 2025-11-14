@@ -225,3 +225,100 @@ fn exercise_full_position(contract: Contract<Options>, underlying_token: Contrac
     assert_eq!(quantity_after, U256::ZERO);
     assert_eq!(collateral_after, U256::ZERO);
 }
+
+#[motsu::test]
+fn multiple_partial_exercises_deplete_balance(
+    contract: Contract<Options>,
+    underlying_token: Contract<TestERC20>,
+) {
+    let writer = Address::from([0x11; 20]);
+    let options_addr = contract.address();
+
+    let write_quantity = U256::from(100_000_000);
+    underlying_token.sender(writer).mint(writer, write_quantity);
+    underlying_token
+        .sender(writer)
+        .approve(options_addr, write_quantity);
+
+    let underlying = Token {
+        address: underlying_token.address(),
+        decimals: 8,
+    };
+    let quote = Token {
+        address: Address::from([0x77; 20]),
+        decimals: 6,
+    };
+    let strike = U256::from(60_000) * U256::from(10).pow(U256::from(18));
+    let expiry = 2_000_000_000u64;
+
+    let token_id = contract
+        .sender(writer)
+        .write_call_option(strike, expiry, write_quantity, underlying, quote)
+        .unwrap();
+
+    let normalized_total = write_quantity * U256::from(10).pow(U256::from(10));
+    let exercise_1 = U256::from(25_000_000) * U256::from(10).pow(U256::from(10));
+    let exercise_2 = U256::from(35_000_000) * U256::from(10).pow(U256::from(10));
+    let exercise_3 = U256::from(40_000_000) * U256::from(10).pow(U256::from(10));
+
+    contract
+        .sender(writer)
+        .exercise_call(token_id, exercise_1)
+        .unwrap();
+    let balance_after_1 = contract.sender(writer).balance_of(writer, token_id);
+    assert_eq!(balance_after_1, normalized_total - exercise_1);
+
+    contract
+        .sender(writer)
+        .exercise_call(token_id, exercise_2)
+        .unwrap();
+    let balance_after_2 = contract.sender(writer).balance_of(writer, token_id);
+    assert_eq!(balance_after_2, normalized_total - exercise_1 - exercise_2);
+
+    contract
+        .sender(writer)
+        .exercise_call(token_id, exercise_3)
+        .unwrap();
+    let balance_after_3 = contract.sender(writer).balance_of(writer, token_id);
+    assert_eq!(balance_after_3, U256::ZERO);
+}
+
+#[motsu::test]
+fn exercising_more_than_balance_fails(
+    contract: Contract<Options>,
+    underlying_token: Contract<TestERC20>,
+) {
+    let writer = Address::from([0x22; 20]);
+    let options_addr = contract.address();
+
+    let write_quantity = U256::from(100_000_000);
+    underlying_token.sender(writer).mint(writer, write_quantity);
+    underlying_token
+        .sender(writer)
+        .approve(options_addr, write_quantity);
+
+    let underlying = Token {
+        address: underlying_token.address(),
+        decimals: 8,
+    };
+    let quote = Token {
+        address: Address::from([0x88; 20]),
+        decimals: 6,
+    };
+    let strike = U256::from(60_000) * U256::from(10).pow(U256::from(18));
+    let expiry = 2_000_000_000u64;
+
+    let token_id = contract
+        .sender(writer)
+        .write_call_option(strike, expiry, write_quantity, underlying, quote)
+        .unwrap();
+
+    let normalized_quantity = write_quantity * U256::from(10).pow(U256::from(10));
+    let excessive_quantity = normalized_quantity + U256::from(1);
+
+    let result = contract
+        .sender(writer)
+        .exercise_call(token_id, excessive_quantity);
+
+    assert!(matches!(result, Err(_)));
+}

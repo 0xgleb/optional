@@ -514,6 +514,12 @@ handled carefully:
 - **Impact:** Collateral shortfall, can't settle all exercises
 - **Protection:** Check balance before/after transfer, revert if mismatch
   detected (enforceable at contract level)
+- **When detected:**
+  - **Write time:** Fee-on-transfer collateral (underlying for calls, quote for
+    puts) causes write to revert, preventing option creation
+  - **Exercise time:** No detection needed - if underlying/quote becomes
+    fee-on-transfer after writing, holder simply receives less tokens on
+    exercise (better than not being able to exercise at all)
 
 **Rebasing Tokens:**
 

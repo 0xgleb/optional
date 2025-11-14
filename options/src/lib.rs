@@ -1082,7 +1082,7 @@ mod tests {
     use motsu::prelude::*;
 
     use super::*;
-    use crate::mock_erc20::{FeeOnTransferERC20, MockERC20};
+    use crate::mock_erc20::MockERC20;
 
     #[test]
     fn test_mock_erc20_mint_increases_balance() {
@@ -1157,42 +1157,6 @@ mod tests {
         token.set_decimals(decimals);
 
         assert_eq!(token.decimals(), decimals);
-    }
-
-    #[test]
-    fn test_fee_on_transfer_erc20_deducts_fee() {
-        let mut token = FeeOnTransferERC20::default();
-        let alice = Address::from([1u8; 20]);
-        let bob = Address::from([2u8; 20]);
-        let amount = U256::from(1000);
-
-        token.mint(alice, amount);
-
-        let transfer_amount = U256::from(1000);
-        token.transfer(alice, bob, transfer_amount);
-
-        let expected_received = U256::from(990); // 99% of 1000
-        assert_eq!(token.balance_of(bob), expected_received);
-        assert_eq!(token.balance_of(alice), U256::ZERO);
-    }
-
-    #[test]
-    fn test_fee_on_transfer_balance_after_transfer() {
-        let mut token = FeeOnTransferERC20::default();
-        let alice = Address::from([1u8; 20]);
-        let bob = Address::from([2u8; 20]);
-        let amount = U256::from(2000);
-
-        token.mint(alice, amount);
-
-        let transfer_amount = U256::from(1000);
-        token.transfer(alice, bob, transfer_amount);
-
-        let expected_bob_balance = U256::from(990); // 99% of 1000
-        let expected_alice_balance = U256::from(1000); // 2000 - 1000
-
-        assert_eq!(token.balance_of(bob), expected_bob_balance);
-        assert_eq!(token.balance_of(alice), expected_alice_balance);
     }
 
     // Decimal Normalization Tests
@@ -1602,25 +1566,6 @@ mod tests {
         assert!(success);
         let received = balance_after.checked_sub(balance_before).unwrap();
         assert_eq!(received, amount);
-    }
-
-    #[test]
-    fn test_transfer_from_fee_on_transfer_fails_detection() {
-        let mut token = FeeOnTransferERC20::default();
-        let from = Address::from([0x01; 20]);
-        let to = Address::from([0x02; 20]);
-        let amount = U256::from(1000);
-
-        token.mint(from, U256::from(10000));
-
-        let balance_before = token.balance_of(to);
-        token.transfer(from, to, amount);
-        let balance_after = token.balance_of(to);
-
-        let received = balance_after.checked_sub(balance_before).unwrap();
-        // FeeOnTransferERC20 deducts 1% fee, so received should be less than amount
-        assert!(received < amount);
-        assert_eq!(received, amount - (amount / U256::from(100)));
     }
 
     #[test]
