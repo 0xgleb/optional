@@ -117,6 +117,8 @@ sol! {
     error UnexpectedBalanceDecrease();
     #[derive(Debug)]
     error SelfApproval();
+    #[derive(Debug)]
+    error AccountsIdsMismatch(uint256 accounts_len, uint256 ids_len);
 }
 
 #[derive(SolidityError, Debug)]
@@ -147,6 +149,8 @@ pub enum OptionsError {
     UnexpectedBalanceDecrease(UnexpectedBalanceDecrease),
     /// Cannot approve self as operator.
     SelfApproval(SelfApproval),
+    /// Accounts and IDs array length mismatch in batch operation.
+    AccountsIdsMismatch(AccountsIdsMismatch),
 }
 
 sol_storage! {
@@ -562,6 +566,54 @@ impl Options {
         let key = Self::approval_key(owner, operator);
         self.operator_approvals.get(key)
     }
+
+    /// Returns the amount of tokens owned by account for token id.
+    ///
+    /// # Parameters
+    /// - `account`: Token holder address
+    /// - `id`: ERC-1155 token ID
+    ///
+    /// # Returns
+    /// Token balance (0 if no balance exists)
+    #[must_use]
+    #[selector(name = "balanceOf")]
+    pub fn balance_of(&self, account: Address, id: B256) -> U256 {
+        self.balance_of_internal(account, id)
+    }
+
+    /// Batched version of balanceOf.
+    ///
+    /// Returns the balance of multiple account/token pairs.
+    ///
+    /// # Parameters
+    /// - `accounts`: Array of token holder addresses
+    /// - `ids`: Array of ERC-1155 token IDs
+    ///
+    /// # Returns
+    /// Array of token balances corresponding to each account/id pair
+    ///
+    /// # Errors
+    /// Returns `OptionsError::AccountsIdsMismatch` if array lengths don't match
+    #[selector(name = "balanceOfBatch")]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn balance_of_batch(
+        &self,
+        accounts: Vec<Address>,
+        ids: Vec<B256>,
+    ) -> Result<Vec<U256>, OptionsError> {
+        if accounts.len() != ids.len() {
+            return Err(OptionsError::AccountsIdsMismatch(AccountsIdsMismatch {
+                accounts_len: U256::from(accounts.len()),
+                ids_len: U256::from(ids.len()),
+            }));
+        }
+
+        Ok(accounts
+            .iter()
+            .zip(ids.iter())
+            .map(|(account, id)| self.balance_of_internal(*account, *id))
+            .collect())
+    }
 }
 
 /// Test-only helper methods (accessible through motsu deref)
@@ -739,8 +791,7 @@ impl Options {
     ///
     /// # Returns
     /// Token balance (0 if no balance exists)
-    #[allow(dead_code)] // TODO: Remove when used in Issue #11 (Full ERC-1155)
-    pub(crate) fn balance_of(&self, owner: Address, token_id: B256) -> U256 {
+    pub(crate) fn balance_of_internal(&self, owner: Address, token_id: B256) -> U256 {
         let key = Self::balance_key(owner, token_id);
         self.balances.get(key)
     }
@@ -2136,6 +2187,128 @@ mod tests {
         let is_approved = contract.sender(alice).is_approved_for_all(alice, operator);
 
         assert!(!is_approved);
+    }
+
+    #[motsu::test]
+    fn test_balance_of_returns_correct_balance(contract: Contract<Options>, alice: Address) {
+        let token_id = B256::from([0x42; 32]);
+        let quantity = U256::from(1000);
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, quantity)
+            .unwrap();
+
+        let balance = contract.sender(alice).balance_of(alice, token_id);
+
+        assert_eq!(balance, quantity);
+    }
+
+    #[motsu::test]
+    fn test_balance_of_returns_zero_for_nonexistent_balance(
+        contract: Contract<Options>,
+        alice: Address,
+    ) {
+        let token_id = B256::from([0x42; 32]);
+
+        let balance = contract.sender(alice).balance_of(alice, token_id);
+
+        assert_eq!(balance, U256::ZERO);
+    }
+
+    #[motsu::test]
+    fn test_balance_of_batch_returns_correct_balances(contract: Contract<Options>, alice: Address) {
+        let bob = Address::from([0xbb; 20]);
+
+        let token_id_1 = B256::from([0x01; 32]);
+        let token_id_2 = B256::from([0x02; 32]);
+        let quantity_1 = U256::from(500);
+        let quantity_2 = U256::from(1000);
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id_1, quantity_1)
+            .unwrap();
+        contract
+            .sender(alice)
+            ._mint(bob, token_id_2, quantity_2)
+            .unwrap();
+
+        let accounts = vec![alice, bob];
+        let ids = vec![token_id_1, token_id_2];
+
+        let balances = contract
+            .sender(alice)
+            .balance_of_batch(accounts, ids)
+            .unwrap();
+
+        assert_eq!(balances.len(), 2);
+        assert_eq!(balances[0], quantity_1);
+        assert_eq!(balances[1], quantity_2);
+    }
+
+    #[motsu::test]
+    fn test_balance_of_batch_empty_arrays_returns_empty(
+        contract: Contract<Options>,
+        alice: Address,
+    ) {
+        let accounts = vec![];
+        let ids = vec![];
+
+        let balances = contract
+            .sender(alice)
+            .balance_of_batch(accounts, ids)
+            .unwrap();
+
+        assert_eq!(balances.len(), 0);
+    }
+
+    #[motsu::test]
+    fn test_balance_of_batch_fails_when_lengths_mismatch(
+        contract: Contract<Options>,
+        alice: Address,
+    ) {
+        let bob = Address::from([0xbb; 20]);
+        let accounts = vec![alice, bob];
+        let ids = vec![B256::from([0x01; 32])];
+
+        let result = contract.sender(alice).balance_of_batch(accounts, ids);
+
+        assert!(matches!(result, Err(OptionsError::AccountsIdsMismatch(_))));
+    }
+
+    #[motsu::test]
+    fn test_balance_of_batch_multiple_tokens_same_account(
+        contract: Contract<Options>,
+        alice: Address,
+    ) {
+        let token_id_1 = B256::from([0x01; 32]);
+        let token_id_2 = B256::from([0x02; 32]);
+        let token_id_3 = B256::from([0x03; 32]);
+        let quantity_1 = U256::from(100);
+        let quantity_2 = U256::from(200);
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id_1, quantity_1)
+            .unwrap();
+        contract
+            .sender(alice)
+            ._mint(alice, token_id_2, quantity_2)
+            .unwrap();
+
+        let accounts = vec![alice, alice, alice];
+        let ids = vec![token_id_1, token_id_2, token_id_3];
+
+        let balances = contract
+            .sender(alice)
+            .balance_of_batch(accounts, ids)
+            .unwrap();
+
+        assert_eq!(balances.len(), 3);
+        assert_eq!(balances[0], quantity_1);
+        assert_eq!(balances[1], quantity_2);
+        assert_eq!(balances[2], U256::ZERO);
     }
 }
 

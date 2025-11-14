@@ -139,27 +139,27 @@ Provide standard ERC-1155 balance query functions.
 
 **Implementation**:
 
-- [ ] Add `AccountsIdsMismatch` error variant to `OptionsError`
-- [ ] Implement `balance_of_public(account: Address, id: B256) -> U256` public
+- [x] Add `AccountsIdsMismatch` error variant to `OptionsError`
+- [x] Implement `balance_of_public(account: Address, id: B256) -> U256` public
       view:
-  - [ ] Call existing internal `balance_of(account, id)`
-  - [ ] Rename this function to match ERC-1155 standard name `balanceOf` (Stylus
+  - [x] Call existing internal `balance_of(account, id)`
+  - [x] Rename this function to match ERC-1155 standard name `balanceOf` (Stylus
         allows camelCase in `#[public]`)
-- [ ] Implement
+- [x] Implement
       `balance_of_batch(accounts: Vec<Address>, ids: Vec<B256>) -> Result<Vec<U256>, OptionsError>`:
-  - [ ] Validate `accounts.len() == ids.len()`, return `AccountsIdsMismatch` if
+  - [x] Validate `accounts.len() == ids.len()`, return `AccountsIdsMismatch` if
         not
-  - [ ] Iterate: collect `balance_of(accounts[i], ids[i])` into result vector
-  - [ ] Return result vector
-- [ ] Remove `#[allow(dead_code)]` from internal `balance_of` function
+  - [x] Iterate: collect `balance_of(accounts[i], ids[i])` into result vector
+  - [x] Return result vector
+- [x] Remove `#[allow(dead_code)]` from internal `balance_of` function
 
 **Tests**:
 
-- [ ] Test `balanceOf` returns correct balance
-- [ ] Test `balance_of_batch` with multiple accounts/ids
-- [ ] Test `balance_of_batch` fails when lengths mismatch
-- [ ] Test empty batch query returns empty vector
-- [ ] Run `cargo test`, `cargo fmt`, `cargo clippy`
+- [x] Test `balanceOf` returns correct balance
+- [x] Test `balance_of_batch` with multiple accounts/ids
+- [x] Test `balance_of_batch` fails when lengths mismatch
+- [x] Test empty batch query returns empty vector
+- [x] Run `cargo test`, `cargo fmt`, `cargo clippy`
 
 **Completion Criteria**: Balance queries work, all tests pass, clippy clean.
 
