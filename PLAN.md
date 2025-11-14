@@ -171,21 +171,21 @@ Add standard events for mint/burn operations.
 
 **Implementation**:
 
-- [ ] Define `TransferSingle` event:
-  - [ ] `event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)`
-- [ ] Update `_mint` internal function to emit `TransferSingle`:
-  - [ ] `log(self.vm(), TransferSingle { operator: to, from: Address::ZERO, to, id, value: quantity })`
-  - [ ] Operator = recipient (standard for self-minting)
-- [ ] Update `_burn` internal function to emit `TransferSingle`:
-  - [ ] `log(self.vm(), TransferSingle { operator: from, from, to: Address::ZERO, id, value: quantity })`
-- [ ] Verify `write_call_option` now emits event via `_mint`
+- [x] Define `TransferSingle` event:
+  - [x] `event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)`
+- [x] Update `_mint` internal function to emit `TransferSingle`:
+  - [x] `log(self.vm(), TransferSingle { operator: to, from: Address::ZERO, to, id, value: quantity })`
+  - [x] Operator = recipient (standard for self-minting)
+- [x] Update `_burn` internal function to emit `TransferSingle`:
+  - [x] `log(self.vm(), TransferSingle { operator: from, from, to: Address::ZERO, id, value: quantity })`
+- [x] Verify `write_call_option` now emits event via `_mint`
 
 **Tests**:
 
-- [ ] Test minting emits `TransferSingle` with correct parameters
-- [ ] Test burning emits `TransferSingle` with correct parameters
-- [ ] Test `write_call_option` emits event
-- [ ] Run `cargo test`, `cargo fmt`, `cargo clippy`
+- [x] Test minting emits `TransferSingle` with correct parameters
+- [x] Test burning emits `TransferSingle` with correct parameters
+- [x] Test `write_call_option` emits event (verified via \_mint)
+- [x] Run `cargo test`, `cargo fmt`, `cargo clippy`
 
 **Completion Criteria**: Mint/burn emit events, all tests pass, clippy clean.
 
