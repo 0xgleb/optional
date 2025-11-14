@@ -51,8 +51,12 @@ version.
   price feeds
 - **Simplicity First**: 100% collateralization eliminates complex risk
   management
-- **Proportional Assignment**: All writers share exercise assignment
-  automatically via vault mechanics (no FIFO/priority tracking needed)
+- **FIFO Individual Assignment**: Writers assigned in deposit order (first
+  deposits assigned first)
+  - Cumulative checkpoints enable efficient binary search for cutoff
+  - Strike payments distributed to assigned writers
+  - Unassigned writers redeem collateral
+  - No oracle needed for mixed-asset valuation
 - **Future Compatible**: Architecture supports adding cash settlement and
   oracles later
 - **Gas Efficient**: All contracts in Rust/Stylus for maximum performance
@@ -224,55 +228,76 @@ Steps:
   - Tokens exchanged atomically in single transaction
   - No intermediate state
 
-- **Vault-based settlement:** All writers share exercise assignment
-  proportionally
-  - Exercise reduces vault total assets
-  - All vault share holders affected equally by percentage
-  - No need to specify which writer to exercise against
-  - Socializes assignment risk across all writers
+- **FIFO assignment:** Writers assigned in deposit order
+  - Earlier deposits assigned first (FIFO queue)
+  - Assigned writers receive strike payments
+  - Unassigned writers redeem collateral
+  - Holder doesn't specify which writer (assignment automatic)
+  - Fair ordering based on deposit time
 
 Outcome: Immediate settlement, tokens exchanged, option tokens burned, vault
 assets reduced
 
-#### Flow 5: Collateral Withdrawal After Expiry
+#### Flow 5: Collateral/Strike Claim After Expiry (FIFO Assignment)
 
-Actors: Option Writer (vault share holder)
+Actors: Option Writer
 
-After expiry, any remaining unexercised options expire worthless. Writers can
-redeem their vault shares for underlying collateral.
+After expiry, writers claim either strike payments (if assigned) or collateral
+(if not assigned) based on FIFO deposit order.
+
+**Assignment Logic:**
+
+- Writers assigned in deposit order (FIFO)
+- First deposits up to `total_exercised` amount get assigned
+- Assigned writers receive strike payments
+- Unassigned writers receive collateral back
 
 Steps:
 
 1. Time passes beyond expiry timestamp
-2. Writer calls vault's `redeem(shares, receiver, owner)` (ERC-4626 standard)
-3. Vault verifies:
-   - Current time > expiry timestamp for this option series
-   - Writer has vault shares to redeem
-   - No outstanding exercisable options backed by these shares
-4. Vault executes:
-   - Burns vault shares
-   - Transfers proportional collateral to writer
-   - For calls: Returns underlying tokens
-   - For puts: Returns quote tokens
+2. Writer calls `claim()` to retrieve their entitlement
+3. Vault calculates assignment for each of writer's deposits:
+   - Uses cumulative totals to determine if deposit was assigned
+   - Aggregates total strike payments and collateral owed
+4. Vault makes batched transfers:
+   - Single transfer for total strike payments (if any assigned)
+   - Single transfer for total collateral (if any unassigned)
+5. Vault deletes claimed checkpoints (minimal gas refund)
 
 **Constraints:**
 
-- **Only after expiry:** Cannot redeem shares backing active (non-expired)
-  options
-- **Partial redemption:** Writer can redeem any quantity of shares
-- **Standard ERC-4626:** Uses standard vault redemption interface
-- **No time limit:** Shares remain redeemable indefinitely after expiry
-- **Proportional payout:** Share value reflects exercises that occurred during
-  option lifecycle
+- **Only after expiry:** Cannot claim until options expired
+- **Single-step process:** Just call `claim()`, no setup needed
+- **Per-deposit granularity:** Each deposit tracked individually with FIFO
+  ordering
+- **No time limit:** Writers can claim indefinitely after expiry
+- **Gas scales with writer's deposit count:** More deposits = higher claim gas
+  cost (typically 1-5 deposits per writer per series)
 
-**Why needed:**
+**Why FIFO assignment:**
 
-- With American options, holders exercise immediately when profitable
-- Any options not exercised before expiry are out-of-the-money
-- Writers redeem shares to reclaim unexercised collateral
-- Share value accounts for all exercises that occurred
+- Fair: Earlier deposits take priority
+- No oracle needed: Strike payments and collateral tracked separately
+- Deterministic: Assignment based purely on deposit order and exercise count
+- Simple: Single function call, no coordination needed
 
-Outcome: Writer redeems vault shares for collateral (adjusted for exercises)
+**Example:**
+
+- Alice deposits 100 WBTC (index 0, cumulative: 100)
+- Bob deposits 50 WBTC (index 1, cumulative: 150)
+- Charlie deposits 75 WBTC (index 2, cumulative: 225)
+- Total exercised: 120 WBTC
+
+Assignment (calculated during claim):
+
+- Alice (100): cumulative_before=0, fully assigned → receives 100 × strike in
+  USDC
+- Bob (50): cumulative_before=100, fully assigned → receives 50 × strike in USDC
+- Charlie (75): cumulative_before=150, partially assigned (120-150=-30) →
+  receives (20 × strike) USDC + 55 WBTC
+
+Outcome: Writer receives strike payments (if assigned) or collateral (if not
+assigned) in single batched transfer
 
 #### Flow 6: Early Collateral Redemption (Burn Shares + Options)
 
@@ -406,7 +431,7 @@ sequenceDiagram
     CLOB->>QuoteERC20: transferFrom(Buyer, Seller, premium)
 ```
 
-#### Call Exercise (Two-Token Model)
+#### Call Exercise (Two-Token Model with FIFO Tracking)
 
 ```mermaid
 sequenceDiagram
@@ -425,10 +450,10 @@ sequenceDiagram
     OptionToken->>QuoteERC20: transferFrom(Holder, Vault, strike_payment)
     OptionToken->>Vault: withdraw(underlying_amount, Holder)
     Vault->>UnderlyingERC20: transfer(Holder, underlying)
-    Vault->>Vault: decrease total_assets (affects all share values)
+    Vault->>Vault: increment total_exercised (for FIFO assignment tracking)
 ```
 
-#### Put Exercise (Two-Token Model)
+#### Put Exercise (Two-Token Model with FIFO Tracking)
 
 ```mermaid
 sequenceDiagram
@@ -447,24 +472,35 @@ sequenceDiagram
     OptionToken->>UnderlyingERC20: transferFrom(Holder, Vault, underlying)
     OptionToken->>Vault: withdraw(strike_payment, Holder)
     Vault->>QuoteERC20: transfer(Holder, strike_payment)
-    Vault->>Vault: exchange assets (in: underlying, out: quote)
+    Vault->>Vault: increment total_exercised (for FIFO assignment tracking)
 ```
 
-#### Vault Share Redemption After Expiry
+#### FIFO Assignment and Claim After Expiry
 
 ```mermaid
 sequenceDiagram
     participant Writer
     participant Vault
     participant CollateralERC20
+    participant QuoteERC20
 
-    Note over Vault: After expiry (options expired worthless)
-    Writer->>Vault: redeem(shares, Writer, Writer)
-    Vault->>Vault: Verify time > expiry, no active options backed by shares
-    Vault->>Vault: burn vault shares
-    Vault->>CollateralERC20: transfer(Writer, proportional_collateral)
+    Note over Vault: After expiry
+    Writer->>Vault: claim()
+    Vault->>Vault: Iterate writer's deposit checkpoints
+    Vault->>Vault: Calculate assignment using cumulative totals
+    Vault->>Vault: Aggregate total strike & collateral owed
 
-    Note over Writer: Collateral returned (adjusted for exercises)
+    alt Has strike payments (assigned deposits)
+        Vault->>QuoteERC20: transfer(Writer, total_strike_payment)
+    end
+
+    alt Has collateral (unassigned deposits)
+        Vault->>CollateralERC20: transfer(Writer, total_collateral)
+    end
+
+    Vault->>Vault: Delete claimed checkpoints (minimal gas refund)
+
+    Note over Writer: Batched transfers in single tx
 ```
 
 #### Early Redemption (Burn Shares + Options)
@@ -573,9 +609,10 @@ isolation prioritizes safety and simplicity.
 
 **Writer flexibility:**
 
-- Keep shares, sell options: remain exposed to assignment
+- Keep shares, sell options: remain exposed to FIFO assignment
 - Sell both: full exit from position
 - Keep both, burn together: reclaim collateral anytime
+- FIFO assignment means earlier deposits have priority
 
 **Universal composability:**
 
@@ -584,11 +621,13 @@ isolation prioritizes safety and simplicity.
 - Use in lending (Aave, Compound)
 - Aggregate in protocols (Yearn, Convex)
 
-**Proportional risk:**
+**FIFO assignment:**
 
-- All vault shareholders share exercise assignment automatically
-- No FIFO/priority tracking needed
-- Democratic assignment through vault mechanics
+- Writers assigned in deposit order (earlier = higher priority)
+- Assignment calculated on-demand during claim using cumulative totals
+- No oracle needed for mixed collateral/strike valuation
+- Fair and deterministic
+- Single function call, no coordination needed
 
 ### Stylus Contract Maintenance
 
@@ -721,7 +760,20 @@ sol_storage! {
         // Backing constraints
         uint256 options_outstanding;  // Total option tokens issued
         bool expired;                 // True after expiry timestamp
+
+        // FIFO deposit tracking for assignment
+        StorageMap<U256, DepositCheckpoint> checkpoints;  // index => deposit info
+        StorageMap<Address, StorageVec<U256>> writer_checkpoints;  // writer => deposit indices
+        StorageU256 checkpoint_count;
+        StorageU256 total_exercised;  // Total options exercised
     }
+}
+
+#[derive(SolidityType)]
+pub struct DepositCheckpoint {
+    writer: Address,
+    amount: U256,
+    cumulative_total: U256,  // Running total for binary search
 }
 
 // Constructor implementation - hardcoded offset for security
@@ -750,11 +802,12 @@ pub fn create_vault(asset: Address) -> Address {
 
 - `constructor(asset)` - Initialize with hardcoded `decimals_offset=3` for
   inflation protection
-- `deposit(assets, receiver)` - Writer deposits collateral, receives shares +
-  options
-- `redeem(shares, receiver, owner)` - Redeem shares after expiry
+- `deposit(assets, receiver)` - Writer deposits collateral, creates checkpoint
+  with cumulative total
 - `exercise_withdraw(assets, recipient)` - Called by OptionsToken during
-  exercise
+  exercise, increments `total_exercised`
+- `claim()` - Writer claims strike payments (if assigned) or collateral (if not
+  assigned), calculated on-demand using cumulative totals
 - `burn_shares_with_options(shares, account)` - Early redemption path
 - Standard ERC-4626 view functions (totalAssets, convertToShares, etc.)
 
@@ -1033,56 +1086,198 @@ higher gas prices.
 
 ### Attack Vectors & Mitigations
 
+**ERC-4626 Inflation Attack:**
+
+- **Attack:** First depositor deposits 1 wei, then directly transfers large
+  amount to vault to inflate share price
+- **Impact:** Subsequent depositors receive 0 shares due to rounding, attacker
+  claims their deposits
+- **Attack Window:** Only affects first deposit into new vault (first writer for
+  each option series)
+- **Mitigation: Virtual Shares + Decimals Offset (OpenZeppelin Stylus)**
+  - Hardcoded `decimals_offset=3` in vault constructor (built into OpenZeppelin
+    Stylus ERC-4626)
+  - NOT a parameter - prevents bypass attacks where attacker deploys vault with
+    offset=0
+  - Virtual shares/assets included automatically, make attack unprofitable even
+    with offset=0
+  - Offset=3 provides 1000x security multiplier (attacker must donate 1000x to
+    steal 1x)
+  - No oracle or pricing data required (pure mathematical protection)
+  - Uniform security across all option series regardless of underlying value
+  - Maintains full ERC-4626 standard compliance
+- **Why offset=3 specifically:**
+  - offset=0: Virtual shares alone make attack unprofitable (attacker loss >=
+    user deposit)
+  - offset=3: 1000x amplification, extremely strong protection
+  - offset=6: 1M x amplification, overkill for most use cases with higher gas
+    costs
+  - Tradeoff: offset=3 provides excellent security without excessive gas
+    overhead
+- **Why hardcoded (not parameter):**
+  - Eliminates risk of deploying vault with weak/no protection
+  - No configuration needed (simpler, safer)
+  - Prevents factory implementation bugs from bypassing protection
+- **Why Not Minimum Deposit:** Options have wildly different collateral values
+  (1 WBTC vs 100 USDC), no pricing oracle to set appropriate minimums
+- **Why Not Dead Shares:** Adds operational complexity (factory must hold all
+  collateral tokens), offset is simpler and equally effective
+- **Why Not Dynamic Offset:** Cannot determine "high-value" vs "low-value"
+  without pricing oracle, fixed offset=3 provides uniform strong protection
+
 **Reentrancy:**
 
 - Stylus contracts follow checks-effects-interactions pattern
-- Update state before external calls (ERC20 transfers)
-- Consider reentrancy guards on critical functions
+- Burn option tokens/shares BEFORE external transfers
+- ERC-4626 standard includes reentrancy protection via SafeERC20
+- Vault exercises must update `total_assets` before transfers
 
 **Front-Running:**
 
 - CLOB uses price-time priority (FIFO), inherently fair
 - Arbitrum's sequencer provides some ordering guarantees
 - Market orders vulnerable to sandwiching (add slippage limits before prod)
+- Vault deposits/redeems vulnerable to share price manipulation
 
 **Integer Overflow/Underflow:**
 
 - Rust panics on overflow in debug mode
 - Use `checked_add()`, `checked_mul()` in production
 - Verify all math operations in critical paths
+- ERC-4626 share calculations especially sensitive to overflow
 
 **Collateral Theft:**
 
 - No admin withdrawal functions
-- Collateral only released through:
-  1. Settlement to holder (on exercise)
-  2. Return to writer (on expiry without exercise)
+- Vault collateral only released through:
+  1. Exercise settlement (holder receives underlying/strike)
+  2. Share redemption (writer receives proportional assets)
+  3. Burn shares + options (account receives collateral)
+- Only OptionsToken contract can call vault's exercise functions
 
 **Time Manipulation:**
 
 - Expiry uses `block.timestamp` (Arbitrum block time)
 - Miners have approx. 15 second influence on timestamp
 - Not exploitable for 1+ hour expiries
-- Consider using `block.number` for stricter timing (at cost of UX)
+- Vault redemption gates enforce expiry check
+
+**Vault Share Manipulation:**
+
+- Writers could sell vault shares separately from options
+- **Impact:** Vault under-collateralized if shares sold but options still
+  exercisable
+- **Mitigation:** Track `options_outstanding` in vault, prevent redemption if
+  exceeds backing
+- **Additional:** Consider enforcing 1:1 options:shares backing ratio strictly
 
 ### Known Limitations & Risks
 
 **Collateral Lock Risk:**
 
 - 100% collateralization means capital inefficient vs cash-settled options
-- Writers' collateral locked until expiry (or until exercised)
-- No early exit for writers (except buying back options on market)
-- American exercise helps: holders exercise early when ITM, releasing writer
-  collateral sooner
+- Writers' collateral locked in vaults until expiry or early redemption
+- Writers can exit early via:
+  1. Burn shares + options together (if still hold both)
+  2. Sell vault shares on DEX (loses exposure to unexercised collateral)
+  3. Buy back options on market, then burn with shares
+- American exercise helps: holders exercise early when ITM, freeing vault
+  capacity
 
-**Post-Expiry Collateral Withdrawal:**
+**Vault Share Management:**
 
-- Writers must manually call `withdraw_expired_collateral()` after expiry
-- No automatic return of collateral for unexercised options
-- Collateral remains safe indefinitely, but requires writer action to reclaim
-- Gas cost minimal (~$0.004 on Arbitrum), so writers incentivized to claim
+- Writers must manage TWO tokens: vault shares (ERC-20) and options (ERC-1155)
+- Selling shares without options creates risk: no claim on collateral if not
+  exercised
+- Selling options without shares creates exposure: still assigned if exercised
+- Requires understanding of vault mechanics and backing ratios
+
+**Post-Expiry FIFO Assignment:**
+
+- Single-step process: Writer calls `claim()` after expiry
+- Assignment calculated on-demand using cumulative deposit totals
+- Assigned writers receive strike payments, unassigned receive collateral
+- Batched transfers (one for strike, one for collateral) regardless of deposit
+  count
+- Gas cost scales with writer's deposit count (typically 1-5 deposits per
+  series)
+- Collateral/strike remain safe indefinitely until claimed
+
+**Per-Series Vault Model:**
+
+- Each option series has separate vault (no cross-collateralization)
+- Writers must deposit separately for each strike/expiry combination
+- Less capital efficient than unified vault per underlying
+- Trade-off: Simplicity and risk isolation vs capital efficiency
+- Future versions could aggregate vaults for better capital utilization
+
+**ERC-4626 Composability Risks:**
+
+- Vault shares tradeable on any DEX (standard ERC-20)
+- Share buyers without options have no benefit (pure liability)
+- Share price drops as exercises occur (asymmetric exposure)
+- Not suitable for standard DeFi yield strategies
+- Documentation must clearly explain vault shares ≠ typical yield-bearing tokens
 
 ## Future Work
+
+### Event-Based Off-Chain Indexing
+
+Improve queryability and UX without changing on-chain logic.
+
+Features:
+
+- Emit comprehensive events for every deposit with cumulative totals
+- Build subgraph/indexer to track all deposits and calculate assignment status
+  off-chain
+- Frontend queries subgraph to show writers their entitlement before claiming
+- On-chain `claim()` logic remains unchanged (calculates assignment
+  independently)
+- Off-chain indexer provides UX improvements only (not required for correctness)
+
+Benefits:
+
+- Better UX: Show assignment status before claim transaction
+- Frontend can estimate gas costs pre-transaction
+- Historical analytics and portfolio tracking
+- Standard DeFi pattern (most protocols use events + subgraph)
+
+Trade-offs:
+
+- Requires off-chain infrastructure (subgraph deployment)
+- Dependency on indexer for UX features (but not for core functionality)
+- Additional frontend integration work
+
+Requirements: Subgraph deployment, event indexing infrastructure, GraphQL
+frontend integration
+
+### Optimized FIFO Assignment (If Needed Later)
+
+Add cutoff caching if many deposits per writer becomes common.
+
+Current approach works well for typical usage (1-5 deposits per writer per
+series). If protocol grows and individual writers frequently make 10+ deposits
+to the same series, consider optimization:
+
+Features:
+
+- Add `finalize_expiry()` function to pre-calculate assignment cutoff via binary
+  search (O(log n))
+- Cache cutoff index in storage for all writers to reference
+- `claim()` uses cached cutoff for early exit (skip checking remaining deposits
+  once past cutoff)
+- Enables better batching and gas savings for writers with many deposits
+
+Gas savings:
+
+- `finalize_expiry()`: ~30k once per series (amortized across all writers)
+- Saves ~60k gas per deposit beyond cutoff for each writer
+- Only beneficial when average deposits per writer > 10
+
+Implementation: Add `exercise_cutoff_index` to storage, add `finalize_expiry()`
+function, update `claim()` to check cutoff first
+
+Decision: Implement only if data shows it's needed (YAGNI principle)
 
 ### Automatic Exercise & Cash Settlement
 
