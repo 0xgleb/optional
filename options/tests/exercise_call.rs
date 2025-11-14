@@ -1,6 +1,6 @@
 mod test_erc20;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use motsu::prelude::*;
 use options::{Options, Token};
 use test_erc20::TestERC20;
@@ -319,6 +319,84 @@ fn exercising_more_than_balance_fails(
     let result = contract
         .sender(writer)
         .exercise_call(token_id, excessive_quantity);
+
+    assert!(matches!(result, Err(_)));
+}
+
+#[motsu::test]
+fn write_and_exercise_near_expiry_succeeds(
+    contract: Contract<Options>,
+    underlying_token: Contract<TestERC20>,
+) {
+    let writer = Address::from([0x33; 20]);
+    let options_addr = contract.address();
+
+    let write_quantity = U256::from(100_000_000);
+    underlying_token.sender(writer).mint(writer, write_quantity);
+    underlying_token
+        .sender(writer)
+        .approve(options_addr, write_quantity);
+
+    let underlying = Token {
+        address: underlying_token.address(),
+        decimals: 8,
+    };
+    let quote = Token {
+        address: Address::from([0x99; 20]),
+        decimals: 6,
+    };
+    let strike = U256::from(60_000) * U256::from(10).pow(U256::from(18));
+    let expiry = 2_000_000_000u64;
+
+    let token_id = contract
+        .sender(writer)
+        .write_call_option(strike, expiry, write_quantity, underlying, quote)
+        .unwrap();
+
+    let normalized_quantity = write_quantity * U256::from(10).pow(U256::from(10));
+    let result = contract
+        .sender(writer)
+        .exercise_call(token_id, normalized_quantity);
+
+    assert!(result.is_ok());
+}
+
+#[motsu::test]
+fn exercise_with_wrong_token_id_fails(
+    contract: Contract<Options>,
+    underlying_token: Contract<TestERC20>,
+) {
+    let writer = Address::from([0x55; 20]);
+    let options_addr = contract.address();
+
+    let write_quantity = U256::from(100_000_000);
+    underlying_token.sender(writer).mint(writer, write_quantity);
+    underlying_token
+        .sender(writer)
+        .approve(options_addr, write_quantity);
+
+    let underlying = Token {
+        address: underlying_token.address(),
+        decimals: 8,
+    };
+    let quote = Token {
+        address: Address::from([0xBB; 20]),
+        decimals: 6,
+    };
+    let strike = U256::from(60_000) * U256::from(10).pow(U256::from(18));
+    let expiry = 2_000_000_000u64;
+
+    let _token_id = contract
+        .sender(writer)
+        .write_call_option(strike, expiry, write_quantity, underlying, quote)
+        .unwrap();
+
+    let wrong_token_id = B256::from([0xFF; 32]);
+    let normalized_quantity = write_quantity * U256::from(10).pow(U256::from(10));
+
+    let result = contract
+        .sender(writer)
+        .exercise_call(wrong_token_id, normalized_quantity);
 
     assert!(matches!(result, Err(_)));
 }

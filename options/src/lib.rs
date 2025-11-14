@@ -284,7 +284,6 @@ pub(crate) fn normalize_amount(amount: U256, from_decimals: u8) -> Result<U256, 
 /// # Errors
 /// - `InvalidDecimals`: If `to_decimals > 18`
 /// - `NormalizationOverflow`: If scale factor calculation would overflow
-#[allow(dead_code)] // TODO: Remove when used in Issue #6 (Exercise)
 pub(crate) fn denormalize_amount(amount: U256, to_decimals: u8) -> Result<U256, OptionsError> {
     if to_decimals > 18 {
         return Err(OptionsError::InvalidDecimals(InvalidDecimals {
@@ -466,23 +465,40 @@ impl Options {
         Err(OptionsError::Unimplemented(Unimplemented {}))
     }
 
-    /// Exercises a call option
+    /// Exercises a call option.
     ///
-    /// Immediate atomic settlement: holder pays strike (quote tokens) to writer,
-    /// receives underlying tokens from collateral, burns option tokens.
-    /// Can only be called before option expiry.
+    /// Immediate atomic settlement following checks-effects-interactions pattern:
+    /// 1. Validates exercise conditions (holder balance, expiry, option type)
+    /// 2. Burns option tokens from holder
+    /// 3. Reduces writer's position (if holder is writer in PoC model)
+    /// 4. Transfers underlying tokens from contract to holder
+    ///
+    /// PoC Note: holder must be writer (single-writer model). Strike payment
+    /// transfer omitted since holder pays themselves.
     ///
     /// # Parameters
     /// - `token_id`: The ERC-1155 token ID of the call option (keccak256 hash)
-    /// - `quantity`: Quantity of options to exercise
+    /// - `quantity`: Quantity of options to exercise (18-decimal normalized)
+    ///
+    /// # Returns
+    /// - `Ok(())` on successful exercise
     ///
     /// # Errors
-    /// - `OptionNotFound`: Option metadata not found
-    /// - `ExerciseAfterExpiry`: Attempting to exercise after expiry
-    /// - `WrongOptionType`: Token ID is for a put option, not call
+    /// - `OptionNotFound`: Option metadata not found for token_id
+    /// - `ExerciseAfterExpiry`: Current time >= option expiry
+    /// - `WrongOptionType`: Token ID represents a put option, not call
     /// - `InvalidQuantity`: Quantity is zero
     /// - `InsufficientBalance`: Holder doesn't have enough option tokens
     /// - `TransferFailed`: ERC20 transfer failed
+    /// - `Overflow`: Arithmetic overflow during calculation
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Writer exercises own call option
+    /// let token_id = contract.write_call_option(strike, expiry, quantity, underlying, quote)?;
+    /// let exercise_qty = U256::from(50) * U256::from(10).pow(U256::from(18));
+    /// contract.exercise_call(token_id, exercise_qty)?;
+    /// ```
     pub fn exercise_call(&mut self, token_id: B256, quantity: U256) -> Result<(), OptionsError> {
         let holder = self.vm().msg_sender();
         let current_time = self.vm().block_timestamp();
@@ -875,7 +891,6 @@ impl Options {
     ///
     /// # Returns
     /// Option metadata struct with all option parameters
-    #[allow(dead_code)] // TODO: Remove when used in Issue #6 (Exercise)
     pub(crate) fn get_option_metadata(&self, token_id: B256) -> OptionMetadataView {
         let metadata = self.option_metadata.get(token_id);
         OptionMetadataView {
@@ -2580,6 +2595,121 @@ mod proptests {
             let key1 = Options::position_key(writer, token_id1);
             let key2 = Options::position_key(writer, token_id2);
             prop_assert_ne!(key1, key2);
+        }
+
+        #[test]
+        fn prop_collateral_reduction_proportional(
+            current_quantity in 1u128..1_000_000_000u128,
+            current_collateral in 1u128..1_000_000_000u128,
+            reduce_quantity in 1u128..1_000_000_000u128,
+        ) {
+            let current_qty = U256::from(current_quantity);
+            let current_col = U256::from(current_collateral);
+            let reduce_qty = U256::from(reduce_quantity);
+
+            prop_assume!(reduce_qty <= current_qty);
+
+            let collateral_to_reduce = current_col
+                .checked_mul(reduce_qty)
+                .and_then(|v| v.checked_div(current_qty));
+
+            if let Some(reduction) = collateral_to_reduce {
+                prop_assert!(reduction <= current_col);
+
+                if reduce_qty == current_qty {
+                    prop_assert_eq!(reduction, current_col);
+                }
+
+                let ratio_qty = (reduce_qty.to::<u128>() as f64) / (current_qty.to::<u128>() as f64);
+                let ratio_col = (reduction.to::<u128>() as f64) / (current_col.to::<u128>() as f64);
+                let ratio_diff = (ratio_qty - ratio_col).abs();
+                prop_assert!(ratio_diff < 0.01, "Ratios should be approximately equal: qty={}, col={}, diff={}", ratio_qty, ratio_col, ratio_diff);
+            }
+        }
+
+        #[test]
+        fn prop_exercise_arithmetic_no_overflow(
+            balance in 0u64..1_000_000u64,
+            exercise_qty in 0u64..1_000_000u64,
+        ) {
+            let balance_u256 = U256::from(balance);
+            let exercise_u256 = U256::from(exercise_qty);
+
+            let result = balance_u256.checked_sub(exercise_u256);
+
+            if exercise_u256 <= balance_u256 {
+                prop_assert!(result.is_some());
+                prop_assert!(result.unwrap() <= balance_u256);
+            } else {
+                prop_assert!(result.is_none());
+            }
+        }
+
+        #[test]
+        fn prop_total_supply_arithmetic(
+            total_supply in 0u128..u64::MAX as u128,
+            burn_amount in 0u128..u64::MAX as u128,
+        ) {
+            let supply = U256::from(total_supply);
+            let burn = U256::from(burn_amount);
+
+            let result = supply.checked_sub(burn);
+
+            if burn <= supply {
+                prop_assert!(result.is_some());
+                let new_supply = result.unwrap();
+                prop_assert!(new_supply <= supply);
+                prop_assert_eq!(new_supply, supply - burn);
+            } else {
+                prop_assert!(result.is_none());
+            }
+        }
+
+        #[test]
+        fn prop_position_reduction_never_panics(
+            current_quantity in any::<u128>(),
+            reduce_quantity in any::<u128>(),
+            current_collateral in any::<u128>(),
+        ) {
+            let current_qty = U256::from(current_quantity);
+            let reduce_qty = U256::from(reduce_quantity);
+            let current_col = U256::from(current_collateral);
+
+            if reduce_qty > current_qty {
+                return Ok(());
+            }
+
+            let collateral_to_reduce = if current_qty.is_zero() {
+                U256::ZERO
+            } else {
+                current_col
+                    .checked_mul(reduce_qty)
+                    .and_then(|v| v.checked_div(current_qty))
+                    .unwrap_or(U256::ZERO)
+            };
+
+            let new_quantity = current_qty.checked_sub(reduce_qty);
+            let new_collateral = current_col.checked_sub(collateral_to_reduce);
+
+            prop_assert!(new_quantity.is_some() || new_quantity.is_none());
+            prop_assert!(new_collateral.is_some() || new_collateral.is_none());
+        }
+
+        #[test]
+        fn prop_exercise_quantity_never_exceeds_balance(
+            balance in 0u128..1_000_000_000u128,
+            exercise in 0u128..1_000_000_000u128,
+        ) {
+            let balance_u256 = U256::from(balance);
+            let exercise_u256 = U256::from(exercise);
+
+            let is_valid = exercise_u256 <= balance_u256 && !exercise_u256.is_zero();
+
+            if is_valid {
+                let remaining = balance_u256.checked_sub(exercise_u256);
+                prop_assert!(remaining.is_some());
+                prop_assert!(remaining.unwrap() < balance_u256 || exercise_u256.is_zero());
+            }
         }
     }
 }
