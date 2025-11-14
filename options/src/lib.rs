@@ -41,6 +41,13 @@ sol! {
         uint256 quantity,
         uint256 collateral
     );
+
+    /// Emitted when approval for all is set.
+    event ApprovalForAll(
+        address indexed owner,
+        address indexed operator,
+        bool approved
+    );
 }
 
 // Implement AbiType for Token to make it usable in #[public] functions
@@ -108,6 +115,8 @@ sol! {
     error TransferFailed();
     #[derive(Debug)]
     error UnexpectedBalanceDecrease();
+    #[derive(Debug)]
+    error SelfApproval();
 }
 
 #[derive(SolidityError, Debug)]
@@ -136,6 +145,8 @@ pub enum OptionsError {
     TransferFailed(TransferFailed),
     /// Balance decreased unexpectedly.
     UnexpectedBalanceDecrease(UnexpectedBalanceDecrease),
+    /// Cannot approve self as operator.
+    SelfApproval(SelfApproval),
 }
 
 sol_storage! {
@@ -175,6 +186,8 @@ sol_storage! {
         mapping(bytes32 => OptionMetadata) option_metadata;
         /// Mapping from position_key(writer, token_id) to position
         mapping(bytes32 => Position) positions;
+        /// Mapping from approval_key(owner, operator) to approval status
+        mapping(bytes32 => bool) operator_approvals;
     }
 }
 
@@ -498,6 +511,57 @@ impl Options {
         let _ = (token_id, quantity);
         Err(OptionsError::Unimplemented(Unimplemented {}))
     }
+
+    /// Grants or revokes permission for operator to transfer all tokens on behalf of caller.
+    ///
+    /// Enables external contracts (like CLOB) to transfer option tokens on behalf of users.
+    /// Required for secondary market trading.
+    ///
+    /// # Parameters
+    /// - `operator`: Address to grant/revoke approval
+    /// - `approved`: True to grant approval, false to revoke
+    ///
+    /// # Errors
+    /// - `SelfApproval`: Cannot approve self as operator
+    pub fn set_approval_for_all(
+        &mut self,
+        operator: Address,
+        approved: bool,
+    ) -> Result<(), OptionsError> {
+        let sender = self.vm().msg_sender();
+
+        if operator == sender {
+            return Err(OptionsError::SelfApproval(SelfApproval {}));
+        }
+
+        let key = Self::approval_key(sender, operator);
+        self.operator_approvals.insert(key, approved);
+
+        log(
+            self.vm(),
+            ApprovalForAll {
+                owner: sender,
+                operator,
+                approved,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Returns true if operator is approved to transfer owner's tokens.
+    ///
+    /// # Parameters
+    /// - `owner`: Token owner address
+    /// - `operator`: Operator address to check
+    ///
+    /// # Returns
+    /// True if operator is approved, false otherwise
+    #[must_use]
+    pub fn is_approved_for_all(&self, owner: Address, operator: Address) -> bool {
+        let key = Self::approval_key(owner, operator);
+        self.operator_approvals.get(key)
+    }
 }
 
 /// Test-only helper methods (accessible through motsu deref)
@@ -560,6 +624,35 @@ impl Options {
     fn balance_key(owner: Address, token_id: B256) -> B256 {
         let encoded = [owner.as_slice(), token_id.as_slice()].concat();
         keccak256(encoded)
+    }
+
+    /// Generates a composite key for operator approval lookups.
+    ///
+    /// # Parameters
+    /// - `owner`: Token owner address
+    /// - `operator`: Operator address
+    ///
+    /// # Returns
+    /// `keccak256(owner || operator)` as composite key
+    fn approval_key(owner: Address, operator: Address) -> B256 {
+        let encoded = [owner.as_slice(), operator.as_slice()].concat();
+        keccak256(encoded)
+    }
+
+    /// Checks if operator is authorized to act on behalf of owner.
+    ///
+    /// Authorization is granted if operator is the owner themselves, or if
+    /// operator has been approved via `set_approval_for_all`.
+    ///
+    /// # Parameters
+    /// - `owner`: Token owner address
+    /// - `operator`: Operator address to check
+    ///
+    /// # Returns
+    /// True if operator is owner or approved, false otherwise
+    #[must_use]
+    pub(crate) fn _is_authorized(&self, owner: Address, operator: Address) -> bool {
+        operator == owner || self.is_approved_for_all(owner, operator)
     }
 
     /// Mints option tokens to an address.
@@ -1958,6 +2051,91 @@ mod tests {
             .sender(alice)
             .withdraw_expired_collateral(B256::ZERO, U256::from(10));
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
+
+    #[motsu::test]
+    fn test_set_approval_for_all_stores_approval(contract: Contract<Options>, alice: Address) {
+        let operator = Address::from([0x99; 20]);
+
+        contract
+            .sender(alice)
+            .set_approval_for_all(operator, true)
+            .unwrap();
+
+        let is_approved = contract.sender(alice).is_approved_for_all(alice, operator);
+
+        assert!(is_approved);
+    }
+
+    #[motsu::test]
+    fn test_set_approval_for_all_revokes_approval(contract: Contract<Options>, alice: Address) {
+        let operator = Address::from([0x99; 20]);
+
+        contract
+            .sender(alice)
+            .set_approval_for_all(operator, true)
+            .unwrap();
+
+        contract
+            .sender(alice)
+            .set_approval_for_all(operator, false)
+            .unwrap();
+
+        let is_approved = contract.sender(alice).is_approved_for_all(alice, operator);
+
+        assert!(!is_approved);
+    }
+
+    #[motsu::test]
+    fn test_cannot_approve_self(contract: Contract<Options>, alice: Address) {
+        let result = contract.sender(alice).set_approval_for_all(alice, true);
+
+        assert!(matches!(result, Err(OptionsError::SelfApproval(_))));
+    }
+
+    #[motsu::test]
+    fn test_is_authorized_returns_true_for_owner(contract: Contract<Options>, alice: Address) {
+        let is_authorized = contract.sender(alice)._is_authorized(alice, alice);
+
+        assert!(is_authorized);
+    }
+
+    #[motsu::test]
+    fn test_is_authorized_returns_true_for_approved_operator(
+        contract: Contract<Options>,
+        alice: Address,
+    ) {
+        let operator = Address::from([0x88; 20]);
+
+        contract
+            .sender(alice)
+            .set_approval_for_all(operator, true)
+            .unwrap();
+
+        let is_authorized = contract.sender(alice)._is_authorized(alice, operator);
+
+        assert!(is_authorized);
+    }
+
+    #[motsu::test]
+    fn test_is_authorized_returns_false_for_non_approved_operator(
+        contract: Contract<Options>,
+        alice: Address,
+    ) {
+        let operator = Address::from([0x77; 20]);
+
+        let is_authorized = contract.sender(alice)._is_authorized(alice, operator);
+
+        assert!(!is_authorized);
+    }
+
+    #[motsu::test]
+    fn test_default_approval_is_false(contract: Contract<Options>, alice: Address) {
+        let operator = Address::from([0x66; 20]);
+
+        let is_approved = contract.sender(alice).is_approved_for_all(alice, operator);
+
+        assert!(!is_approved);
     }
 }
 

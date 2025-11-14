@@ -101,33 +101,33 @@ option tokens on behalf of users.
 
 **Implementation**:
 
-- [ ] Add `operator_approvals: mapping(bytes32 => bool)` to `Options` storage
+- [x] Add `operator_approvals: mapping(bytes32 => bool)` to `Options` storage
       struct
-- [ ] Define `approval_key(owner: Address, operator: Address) -> B256` helper:
-  - [ ] `keccak256(owner || operator)` for composite key
-- [ ] Define `ApprovalForAll` event:
-  - [ ] `event ApprovalForAll(address indexed owner, address indexed operator, bool approved)`
-- [ ] Implement `set_approval_for_all(operator: Address, approved: bool)` public
+- [x] Define `approval_key(owner: Address, operator: Address) -> B256` helper:
+  - [x] `keccak256(owner || operator)` for composite key
+- [x] Define `ApprovalForAll` event:
+  - [x] `event ApprovalForAll(address indexed owner, address indexed operator, bool approved)`
+- [x] Implement `set_approval_for_all(operator: Address, approved: bool)` public
       function:
-  - [ ] Validate `operator != msg_sender` (cannot approve self)
-  - [ ] Add `SelfApproval` error variant
-  - [ ] Store approval:
+  - [x] Validate `operator != msg_sender` (cannot approve self)
+  - [x] Add `SelfApproval` error variant
+  - [x] Store approval:
         `self.operator_approvals.insert(approval_key(msg_sender, operator), approved)`
-  - [ ] Emit `ApprovalForAll` event
-- [ ] Implement `is_approved_for_all(owner: Address, operator: Address) -> bool`
+  - [x] Emit `ApprovalForAll` event
+- [x] Implement `is_approved_for_all(owner: Address, operator: Address) -> bool`
       public view:
-  - [ ] Query: `self.operator_approvals.get(approval_key(owner, operator))`
-- [ ] Implement `_is_authorized(owner: Address, operator: Address) -> bool`
+  - [x] Query: `self.operator_approvals.get(approval_key(owner, operator))`
+- [x] Implement `_is_authorized(owner: Address, operator: Address) -> bool`
       internal helper:
-  - [ ] Return `operator == owner || is_approved_for_all(owner, operator)`
+  - [x] Return `operator == owner || is_approved_for_all(owner, operator)`
 
 **Tests**:
 
-- [ ] Test approval/revocation stores correctly
-- [ ] Test cannot approve self
-- [ ] Test `_is_authorized` returns true for owner and approved operators
-- [ ] Test `ApprovalForAll` event emission
-- [ ] Run `cargo test`, `cargo fmt`, `cargo clippy`
+- [x] Test approval/revocation stores correctly
+- [x] Test cannot approve self
+- [x] Test `_is_authorized` returns true for owner and approved operators
+- [x] Test `ApprovalForAll` event emission
+- [x] Run `cargo test`, `cargo fmt`, `cargo clippy`
 
 **Completion Criteria**: Approval system works, all tests pass, clippy clean.
 
