@@ -11,8 +11,10 @@ version.
 
 ### PoC Scope
 
-- Users can write (sell) and buy options as ERC-1155 tokens
-- Options trade on a fully on-chain CLOB with price-time priority matching
+- Users can write (sell) and buy options as ERC-20 tokens (one contract per
+  series)
+- Each option series has dedicated vault (ERC-4626) for collateral management
+- Options trade on fully on-chain CLOB or any standard DEX (Uniswap, etc.)
 - Settlement is physical (actual token delivery) with manual exercise
 - All collateral is 100% locked in the underlying assets (no fractional reserve)
 - ERC20 token pairs
@@ -27,10 +29,30 @@ version.
 
 ### Key Architectural Decisions
 
+- **ERC-20 per Option Series**: Each option series is a separate ERC-20 contract
+  - Maximum DeFi composability (works with all AMMs, lending, wallets)
+  - Proven model (Opyn, established options protocols)
+  - Factory pattern for efficient deployment (single activation cost)
+  - Separate token from vault shares
+    - Option token represents the right but not the obligation to exercise
+      before maturity
+    - Vault share token represents the right to the corresponding collateral if
+      not assigned before maturity
+    - Owning both allows users to burn the tokens and withdraw the collateral
+      before maturity
+- **Vault-Based Collateral**: ERC-4626 vaults manage collateral per option
+  series
+  - Writers deposit collateral, receive vault shares (ERC-20) + option tokens
+    (ERC-20)
+  - Both tokens independently transferrable
+  - Exercise reduces vault assets, affecting all share holders proportionally
+  - Enables standard DeFi composability for both tokens
 - **Trustless by Design**: Physical settlement means no reliance on external
   price feeds
 - **Simplicity First**: 100% collateralization eliminates complex risk
   management
+- **Proportional Assignment**: All writers share exercise assignment
+  automatically via vault mechanics (no FIFO/priority tracking needed)
 - **Future Compatible**: Architecture supports adding cash settlement and
   oracles later
 - **Gas Efficient**: All contracts in Rust/Stylus for maximum performance
@@ -75,22 +97,34 @@ writers are always fully protected regardless of when exercise occurs.
 
 #### Flow 1: Writing (Selling) an Option
 
-Actors: Option Writer Steps:
+Actors: Option Writer
+
+Steps:
 
 1. Writer selects option parameters (underlying ERC20, quote ERC20, strike,
    expiry, type, quantity)
 2. Contract calculates required collateral based on option type
-3. Writer approves ERC20 token transfer to contract
-4. Contract transfers collateral from writer
-5. Contract mints ERC-1155 option tokens to writer
-6. Writer can now sell these tokens via CLOB or elsewhere or hold them
+3. Writer approves ERC20 token transfer to vault contract
+4. Contract executes:
+   - Deploys new ERC-20 option token contract (if first write for this series)
+   - Deploys new ERC-4626 vault contract (if first write for this series)
+   - Deposits collateral into vault
+   - Mints vault shares (ERC-20) to writer proportional to deposit
+   - Mints option tokens (ERC-20) to writer equal to quantity
+5. Writer can now sell option tokens via CLOB or any DEX, or hold them
+6. Writer retains vault shares representing claim on collateral
 
 Collateral:
 
-- Calls: Underlying ERC20 tokens (1:1 ratio)
-- Puts: Quote ERC20 tokens (strike \* quantity)
+- Calls: Underlying ERC20 tokens (1:1 ratio) deposited to underlying vault
+- Puts: Quote ERC20 tokens (strike \* quantity) deposited to quote vault
 
-Outcome: Option tokens (ERC-1155) minted, collateral (ERC20) locked
+Outcome:
+
+- Option tokens (ERC-20) minted to writer
+- Vault shares (ERC-20) minted to writer (separate token contract)
+- Collateral deposited into vault
+- Writer can trade both tokens independently
 
 #### Flow 2: Trading Options
 
@@ -153,16 +187,18 @@ Actors: Option Holder
 Steps:
 
 1. Holder decides to exercise option tokens (any time before expiry)
-2. Holder approves ERC20 token transfer to contract:
+2. Holder approves ERC20 token transfer to vault contract:
    - For calls: Quote tokens (strike payment)
    - For puts: Underlying tokens
-3. Holder calls `exercise_call(tokenId, quantity)` or
-   `exercise_put(tokenId, quantity)`
+3. Holder calls option token's `exercise(quantity)` function
 4. Contract executes immediately:
-   - Transfers holder's payment to writer
-   - Transfers writer's collateral to holder
-   - Burns holder's ERC-1155 option tokens
-   - Releases writer's position
+   - Transfers holder's payment tokens to vault (strike for calls, underlying
+     for puts)
+   - Vault transfers corresponding assets to holder (underlying for calls,
+     strike for puts)
+   - Burns holder's ERC-20 option tokens
+   - Vault total assets decrease, reducing value of all vault shares
+     proportionally
 
 **Constraints and Edge Cases:**
 
@@ -178,214 +214,381 @@ Steps:
 - **Requirements:**
 
   - Holder must have sufficient option token balance
-  - Holder must have approved sufficient payment tokens
+  - Holder must have approved sufficient payment tokens to vault
   - Holder must have sufficient payment token balance
   - Transaction must occur before expiry timestamp
+  - Vault must have sufficient collateral to settle exercise
 
 - **No cancellation:** Exercise is immediate and irreversible
 
   - Tokens exchanged atomically in single transaction
   - No intermediate state
 
-- **Multiple writers:** If option has multiple writers:
-  - Exercise proportionally reduces all writers' positions (FIFO or pro-rata)
-  - Payment distributed to writers accordingly
-  - Implementation detail TBD
+- **Vault-based settlement:** All writers share exercise assignment
+  proportionally
+  - Exercise reduces vault total assets
+  - All vault share holders affected equally by percentage
+  - No need to specify which writer to exercise against
+  - Socializes assignment risk across all writers
 
-Outcome: Immediate settlement, tokens exchanged, option tokens burned
+Outcome: Immediate settlement, tokens exchanged, option tokens burned, vault
+assets reduced
 
 #### Flow 5: Collateral Withdrawal After Expiry
 
-Actors: Option Writer
+Actors: Option Writer (vault share holder)
 
 After expiry, any remaining unexercised options expire worthless. Writers can
-reclaim their locked collateral for these expired positions.
+redeem their vault shares for underlying collateral.
 
 Steps:
 
 1. Time passes beyond expiry timestamp
-2. Writer calls `withdraw_expired_collateral(tokenId)` or
-   `withdraw_expired_collateral(tokenId, quantity)`
-3. Contract verifies:
-   - Current time > expiry timestamp
-   - Writer has a position with locked collateral for this token
-4. Contract transfers collateral back to writer:
+2. Writer calls vault's `redeem(shares, receiver, owner)` (ERC-4626 standard)
+3. Vault verifies:
+   - Current time > expiry timestamp for this option series
+   - Writer has vault shares to redeem
+   - No outstanding exercisable options backed by these shares
+4. Vault executes:
+   - Burns vault shares
+   - Transfers proportional collateral to writer
    - For calls: Returns underlying tokens
-   - For puts: Returns quote tokens (strike amount)
-5. Contract reduces/closes writer's position
+   - For puts: Returns quote tokens
 
 **Constraints:**
 
-- **Only after expiry:** Cannot withdraw while options are still active
-- **Partial withdrawal:** Writer can withdraw collateral for any quantity <=
-  their unexercised position
-- **Permissionless:** Anyone can call on behalf of writer (collateral goes to
-  original writer)
-- **No time limit:** Collateral remains available indefinitely after expiry
+- **Only after expiry:** Cannot redeem shares backing active (non-expired)
+  options
+- **Partial redemption:** Writer can redeem any quantity of shares
+- **Standard ERC-4626:** Uses standard vault redemption interface
+- **No time limit:** Shares remain redeemable indefinitely after expiry
+- **Proportional payout:** Share value reflects exercises that occurred during
+  option lifecycle
 
 **Why needed:**
 
 - With American options, holders exercise immediately when profitable
 - Any options not exercised before expiry are out-of-the-money
-- Writers deserve to reclaim this "unexercised" collateral
-- No automatic processing - writers claim when convenient (low gas environment)
+- Writers redeem shares to reclaim unexercised collateral
+- Share value accounts for all exercises that occurred
 
-Outcome: Writer reclaims collateral for expired unexercised options
+Outcome: Writer redeems vault shares for collateral (adjusted for exercises)
+
+#### Flow 6: Early Collateral Redemption (Burn Shares + Options)
+
+Actors: Account holding both vault shares AND option tokens
+
+Writers who retain both vault shares and option tokens can reclaim collateral
+early by burning matching quantities of both, bypassing full exercise flow.
+
+Steps:
+
+1. Account verifies ownership of both:
+   - Vault shares (ERC-20 from vault)
+   - Option tokens (ERC-20 for same option series)
+2. Account calls option token's `burnWithShares(quantity)` function
+3. Contract verifies:
+   - Account has sufficient vault shares
+   - Account has sufficient option tokens
+   - Quantity doesn't exceed available backing ratio
+4. Contract executes atomically:
+   - Burns option tokens from account
+   - Burns vault shares from account
+   - Transfers proportional collateral to account
+   - Updates vault total assets and total supply
+
+**Constraints:**
+
+- **Matching quantities required:** Must burn equal amounts of shares and
+  options
+- **Backing ratio enforced:** Cannot burn more than vault can back
+  - Example: Vault has 100 assets, 100 shares, 80 options outstanding
+  - Can burn up to 80 shares+options (the limiting factor)
+- **Any time before expiry:** Available throughout option lifecycle
+- **Optimized path:** Cheaper than selling options then redeeming shares
+  separately
+
+**Why needed:**
+
+- Writers who keep both shares and options can exit position early
+- More gas-efficient than market selling + share redemption
+- Useful when option is OTM and writer wants to close position
+- Reduces total outstanding options, freeing vault capacity
+
+**Example:**
+
+Writer writes 10 calls, keeps 7 shares + 7 options, sells 3 options to market:
+
+- Can burn 7 shares + 7 options to reclaim 70% of original collateral
+- Remaining 3 shares stay in vault backing the 3 sold options
+- After expiry (if not exercised), can redeem final 3 shares
+
+Outcome: Both option tokens and vault shares burned, collateral returned early
 
 ### Option Lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Written
-    Written --> Trading
+    [*] --> Written: writer deposits to vault
+    Written --> Trading: writer sells options
+    Written --> SharesAndOptionsHeld: writer keeps both
+
     Trading --> Exercised: holder exercises (any time before expiry)
     Trading --> Expired: time passes expiry without exercise
-    Expired --> CollateralWithdrawn: writer withdraws collateral
-    Exercised --> [*]: tokens exchanged, writer position closed
-    CollateralWithdrawn --> [*]: collateral returned to writer
+
+    SharesAndOptionsHeld --> BurnedEarly: burn shares+options together
+    SharesAndOptionsHeld --> Trading: sell options separately
+
+    Expired --> SharesRedeemed: redeem vault shares (ERC-4626)
+    Exercised --> SharesRedeemed: redeem remaining shares after exercises
+    BurnedEarly --> [*]: collateral returned early
+    SharesRedeemed --> [*]: collateral returned to writer
 ```
 
 ### Contract execution flows
 
-#### Write Call Option (No CLOB)
+#### Write Call Option (Two-Token Model)
 
 ```mermaid
 sequenceDiagram
     participant Writer
     participant UnderlyingERC20
-    participant OptionsToken
+    participant Factory
+    participant Vault
+    participant OptionToken
 
-    Writer->>UnderlyingERC20: approve(OptionsToken, collateral)
-    Writer->>OptionsToken: writeOption(underlying, quote, strike, expiry, CALL, quantity)
-    OptionsToken->>UnderlyingERC20: transferFrom(Writer, OptionsToken, collateral)
-    OptionsToken->>OptionsToken: mint ERC-1155 tokens to Writer
-    OptionsToken->>OptionsToken: record position (Writer, collateral_locked)
+    Writer->>Factory: writeCallOption(underlying, quote, strike, expiry, quantity)
+    Factory->>Factory: deploy OptionToken + Vault (if first write for series)
+    Writer->>UnderlyingERC20: approve(Vault, collateral)
+    Factory->>Vault: deposit(collateral, Writer)
+    Vault->>UnderlyingERC20: transferFrom(Writer, Vault, collateral)
+    Vault->>Writer: mint vault shares (ERC-20)
+    OptionToken->>Writer: mint option tokens (ERC-20)
 ```
 
-#### Write Put Option (No CLOB)
+#### Write Put Option (Two-Token Model)
 
 ```mermaid
 sequenceDiagram
     participant Writer
     participant QuoteERC20
-    participant OptionsToken
+    participant Factory
+    participant Vault
+    participant OptionToken
 
-    Writer->>QuoteERC20: approve(OptionsToken, strike_collateral)
-    Writer->>OptionsToken: writeOption(underlying, quote, strike, expiry, PUT, quantity)
-    OptionsToken->>QuoteERC20: transferFrom(Writer, OptionsToken, strike_collateral)
-    OptionsToken->>OptionsToken: mint ERC-1155 tokens to Writer
-    OptionsToken->>OptionsToken: record position (Writer, collateral_locked)
+    Writer->>Factory: writePutOption(underlying, quote, strike, expiry, quantity)
+    Factory->>Factory: deploy OptionToken + Vault (if first write for series)
+    Writer->>QuoteERC20: approve(Vault, strike_collateral)
+    Factory->>Vault: deposit(strike_collateral, Writer)
+    Vault->>QuoteERC20: transferFrom(Writer, Vault, strike_collateral)
+    Vault->>Writer: mint vault shares (ERC-20)
+    OptionToken->>Writer: mint option tokens (ERC-20)
 ```
 
-#### Trade Options
+#### Trade Options (CLOB or Any DEX)
 
 ```mermaid
 sequenceDiagram
     participant Seller
-    participant OptionsToken
+    participant OptionToken
     participant CLOB
     participant QuoteERC20
     participant Buyer
 
-    Seller->>OptionsToken: setApprovalForAll(CLOB, true)
-    Seller->>CLOB: placeOrder(tokenId, price, quantity, SELL)
+    Note over Seller,Buyer: Standard ERC-20 trading (works on Uniswap too!)
+    Seller->>OptionToken: approve(CLOB, quantity)
+    Seller->>CLOB: placeOrder(option_token_address, price, quantity, SELL)
     CLOB->>CLOB: Add order to book
 
     Buyer->>QuoteERC20: approve(CLOB, premium)
-    Buyer->>CLOB: marketOrder(tokenId, quantity, BUY)
-    CLOB->>OptionsToken: safeTransferFrom(Seller, Buyer, tokenId, quantity)
+    Buyer->>CLOB: marketOrder(option_token_address, quantity, BUY)
+    CLOB->>OptionToken: transferFrom(Seller, Buyer, quantity)
     CLOB->>QuoteERC20: transferFrom(Buyer, Seller, premium)
 ```
 
-#### Call Exercise
+#### Call Exercise (Two-Token Model)
 
 ```mermaid
 sequenceDiagram
     participant Holder
     participant QuoteERC20
-    participant OptionsToken
+    participant OptionToken
+    participant Vault
     participant UnderlyingERC20
-    participant Writer
 
-    Note over Holder,OptionsToken: Any time before expiry
-    Holder->>QuoteERC20: approve(OptionsToken, strike_payment)
-    Holder->>OptionsToken: exercise_call(tokenId, quantity)
+    Note over Holder,Vault: Any time before expiry
+    Holder->>QuoteERC20: approve(Vault, strike_payment)
+    Holder->>OptionToken: exercise(quantity)
 
-    Note over OptionsToken: Immediate atomic settlement
-    OptionsToken->>QuoteERC20: transferFrom(Holder, Writer, strike_payment)
-    OptionsToken->>UnderlyingERC20: transfer(Holder, underlying_from_collateral)
-    OptionsToken->>OptionsToken: burn Holder's ERC-1155 tokens
-    OptionsToken->>OptionsToken: reduce/close Writer's position
+    Note over OptionToken,Vault: Immediate atomic settlement
+    OptionToken->>OptionToken: burn(Holder, quantity)
+    OptionToken->>QuoteERC20: transferFrom(Holder, Vault, strike_payment)
+    OptionToken->>Vault: withdraw(underlying_amount, Holder)
+    Vault->>UnderlyingERC20: transfer(Holder, underlying)
+    Vault->>Vault: decrease total_assets (affects all share values)
 ```
 
-#### Put Exercise
+#### Put Exercise (Two-Token Model)
 
 ```mermaid
 sequenceDiagram
     participant Holder
     participant UnderlyingERC20
-    participant OptionsToken
+    participant OptionToken
+    participant Vault
     participant QuoteERC20
-    participant Writer
 
-    Note over Holder,OptionsToken: Any time before expiry
-    Holder->>UnderlyingERC20: approve(OptionsToken, underlying_amount)
-    Holder->>OptionsToken: exercise_put(tokenId, quantity)
+    Note over Holder,Vault: Any time before expiry
+    Holder->>UnderlyingERC20: approve(Vault, underlying_amount)
+    Holder->>OptionToken: exercise(quantity)
 
-    Note over OptionsToken: Immediate atomic settlement
-    OptionsToken->>UnderlyingERC20: transferFrom(Holder, Writer, underlying)
-    OptionsToken->>QuoteERC20: transfer(Holder, strike_from_collateral)
-    OptionsToken->>OptionsToken: burn Holder's ERC-1155 tokens
-    OptionsToken->>OptionsToken: reduce/close Writer's position
+    Note over OptionToken,Vault: Immediate atomic settlement
+    OptionToken->>OptionToken: burn(Holder, quantity)
+    OptionToken->>UnderlyingERC20: transferFrom(Holder, Vault, underlying)
+    OptionToken->>Vault: withdraw(strike_payment, Holder)
+    Vault->>QuoteERC20: transfer(Holder, strike_payment)
+    Vault->>Vault: exchange assets (in: underlying, out: quote)
 ```
 
-#### Collateral Withdrawal After Expiry
+#### Vault Share Redemption After Expiry
 
 ```mermaid
 sequenceDiagram
     participant Writer
-    participant OptionsToken
+    participant Vault
     participant CollateralERC20
 
-    Note over OptionsToken: After expiry (option not exercised)
-    Writer->>OptionsToken: withdraw_expired_collateral(tokenId, quantity)
-    OptionsToken->>OptionsToken: Verify time > expiry, writer has position
-    OptionsToken->>CollateralERC20: transfer(Writer, collateral)
-    OptionsToken->>OptionsToken: reduce/close Writer's position
+    Note over Vault: After expiry (options expired worthless)
+    Writer->>Vault: redeem(shares, Writer, Writer)
+    Vault->>Vault: Verify time > expiry, no active options backed by shares
+    Vault->>Vault: burn vault shares
+    Vault->>CollateralERC20: transfer(Writer, proportional_collateral)
 
-    Note over Writer: Collateral returned, option expired worthless
+    Note over Writer: Collateral returned (adjusted for exercises)
+```
+
+#### Early Redemption (Burn Shares + Options)
+
+```mermaid
+sequenceDiagram
+    participant Account
+    participant OptionToken
+    participant Vault
+    participant VaultShares
+    participant CollateralERC20
+
+    Note over Account: Account owns both shares and options
+    Account->>OptionToken: burnWithShares(quantity)
+    OptionToken->>OptionToken: verify balances, backing ratio
+    OptionToken->>OptionToken: burn(Account, quantity)
+    OptionToken->>VaultShares: transferFrom(Account, Vault, quantity)
+    Vault->>VaultShares: burn(quantity)
+    Vault->>Vault: update total_assets/total_supply
+    Vault->>CollateralERC20: transfer(Account, proportional_collateral)
+
+    Note over Account: Early exit before expiry
 ```
 
 ## Architecture
 
 All contracts in Rust/WASM using Arbitrum Stylus SDK.
 
-### Separate Contracts Design
+### Two-Token Architecture per Option Series
 
-#### OptionsToken Contract
+The system deploys **two separate ERC-20 tokens per option series**:
 
-- ERC-1155 token implementation (OpenZeppelin Stylus)
-- Collateral custody for ALL options (all ERC20 tokens held here)
-- Option minting/burning
-- Exercise intent signaling
-- Settlement execution at expiry
-- Standalone functionality - users never need CLOB to use options
+1. **Option Token (ERC-20)** - represents long position (right to exercise)
+2. **Vault Share (ERC-4626/ERC-20)** - represents short position + collateral
+   claim
+
+Both tokens are independently transferrable, enabling separated long/short
+option markets.
+
+#### OptionFactory Contract
+
+- **Factory pattern**: Deploys option token + vault pairs for new series
+- **Single activation cost**: First deployment activates WASM, subsequent
+  deploys free
+- **Deterministic addresses**: Option parameters hash to predictable contract
+  addresses
+- **Registry**: Tracks all deployed option series
+- **Permissionless**: Anyone can deploy new option series
+
+#### OptionToken Contract (ERC-20 per series)
+
+- **Standard ERC-20**: Full compatibility with all DeFi protocols
+- **Exercise functionality**: `exercise(quantity)` burns tokens, coordinates
+  settlement
+- **Burn with shares**: `burnWithShares(quantity)` early exit if holder owns
+  both
+- **Vault integration**: Calls vault for collateral transfers during exercise
+- **Immutable metadata**: Strike, expiry, underlying, quote hardcoded at
+  deployment
+
+#### OptionVault Contract (ERC-4626 per series)
+
+- **One vault per option series** (1:1 with option token contract)
+  - Example: WBTC/USDC 60k Call Dec-31 has:
+    - OptionToken ERC-20 (tradeable call option)
+    - OptionVault ERC-4626 (WBTC collateral pool)
+  - Isolates collateral and risk per series
+- **Collateral custody**: Holds ALL underlying/quote tokens for series
+- **Share issuance**: Mints ERC-20 vault shares to writers proportional to
+  deposits
+- **Proportional settlement**: Exercises reduce vault assets, affecting all
+  shareholders
+- **Standard ERC-4626**: Full compliance for composability
+- **Post-expiry redemption**: Writers redeem shares for remaining collateral
+- **Backing enforcement**: Prevents share redemption if options outstanding
+
+**Per-Series Isolation Rationale:**
+
+- Risk isolation: Each series has separate collateral pool
+- Simple accounting: No cross-series tracking needed
+- Clear expiry: Vault lifecycle matches option lifecycle
+- Predictable redemption: Share value only affected by same-series exercises
+
+Trade-off: More contract deployments vs unified liquidity pool. Per-series
+isolation prioritizes safety and simplicity.
 
 #### Central Limit Order Book (CLOB)
 
-- Orderbook storage (`StorageMap`-based, see storage limitations below)
-- Order matching engine (price-time priority)
-- Trades existing ERC-1155 option tokens only
-- Requires ERC-1155 approval from users
-- Just one trading venue among many possible
+- **Orderbook storage**: `StorageMap`-based price-time priority matching
+- **Standard ERC-20 trading**: Works with any ERC-20 (option tokens, vault
+  shares, other tokens)
+- **Optional venue**: Options can also trade on Uniswap, Curve, any DEX
+- **Requires approval**: Standard ERC-20 `approve()` pattern
 
-#### Why Separate
+#### Why This Design
 
-- Options tokens fully composable (tradeable on AMMs, other DEXs, OTC)
-- Users can write and exercise options without CLOB
-- CLOB is optional trading venue, not core primitive
-- Modular: upgrade CLOB without affecting options
-- Clear security boundaries
+**Two separate tokens per series:**
+
+- **Option Token (ERC-20)** = Long exposure (right to exercise)
+  - Holder can transfer/sell without affecting collateral
+  - Burns on exercise
+- **Vault Share (ERC-20)** = Short exposure + collateral claim
+  - Writer exposed to assignment (share value decreases on exercise)
+  - Redeemable for collateral after expiry
+  - Transferrable (sell short position to exit)
+
+**Writer flexibility:**
+
+- Keep shares, sell options: remain exposed to assignment
+- Sell both: full exit from position
+- Keep both, burn together: reclaim collateral anytime
+
+**Universal composability:**
+
+- Both tokens are standard ERC-20
+- Trade on any DEX (Uniswap, Curve, Balancer)
+- Use in lending (Aave, Compound)
+- Aggregate in protocols (Yearn, Convex)
+
+**Proportional risk:**
+
+- All vault shareholders share exercise assignment automatically
+- No FIFO/priority tracking needed
+- Democratic assignment through vault mechanics
 
 ### Stylus Contract Maintenance
 
@@ -403,64 +606,157 @@ Reactivation process:
   locked)
 - Recommend automated monitoring and reactivation infrastructure
 
-### OptionsToken Contract
+### OptionFactory Contract
 
 Responsibilities:
 
-- Mint ERC-1155 tokens when options written
-- Hold all collateral (underlying and quote ERC20s)
-- Track writer positions and locked collateral
-- Execute immediate American exercise (any time before expiry)
-- Allow writers to withdraw collateral for expired unexercised options
-- Burn tokens on exercise
+- Deploy new option token + vault pairs for option series
+- Registry of all deployed option series
+- Deterministic address calculation for existing series
+- Single-activation WASM optimization (deploy implementation once, clone many
+  times)
 
-Storage Structure (draft, TBC)
+Storage Structure:
 
 ```rust
 sol_storage! {
     #[entrypoint]
-    pub struct OptionsToken {
-        // ERC-1155 state (from OpenZeppelin)
-        mapping(address => mapping(uint256 => uint256)) balances;
-        mapping(address => mapping(address => bool)) operator_approvals;
+    pub struct OptionFactory {
+        // Option series registry: seriesId -> (option_token, vault)
+        StorageMap<B256, SeriesContracts> series_registry;
 
-        // Writer positions: (writer, tokenId) -> Position
-        mapping(bytes32 => Position) positions;
-
-        // Option metadata: tokenId -> OptionMetadata
-        mapping(uint256 => OptionMetadata) option_metadata;
-
-        // Available collateral: (user, token) -> amount
-        mapping(bytes32 => uint256) collateral_balances;
-
-        // Total supply per token ID
-        mapping(uint256 => uint256) total_supply;
+        // Implementation contracts for cloning
+        StorageAddress option_token_implementation;
+        StorageAddress option_vault_implementation;
     }
 
-    pub struct Position {
-        address writer;
-        uint256 quantity_written;
-        uint256 collateral_locked;
-        address collateral_token;
-    }
-
-    pub struct OptionMetadata {
-        address underlying;
-        address quote;
-        uint256 strike;
-        uint256 expiry;
-        uint8 option_type; // 0 = Call, 1 = Put
+    pub struct SeriesContracts {
+        address option_token;  // ERC-20 option token contract
+        address vault;         // ERC-4626 vault contract
     }
 }
 ```
 
-Token ID is `keccak256` hash of
+**Factory Functions:**
 
-- Address of the underlying ERC20 token
-- Address of the quote ERC20 token
-- Strike price (normalized 18 decimals)
-- Expiration timestamp
-- Option kind (call/put)
+- `create_option_series(underlying, quote, strike, expiry, option_type)` -
+  Deploy new series
+  - Sets `decimals_offset=3` for all vaults (uniform security, no pricing
+    needed)
+  - Deploys OptionToken + OptionVault pair
+  - Registers series in registry
+- `get_series(series_id)` - Get existing series contracts
+- `series_id(params)` - Calculate deterministic series ID
+- Uses minimal proxy pattern (EIP-1167) for gas-efficient cloning
+
+### OptionToken Contract (per series)
+
+Responsibilities:
+
+- Standard ERC-20 token for option long positions
+- Execute exercise by burning tokens and coordinating vault settlement
+- Enable burning with vault shares for early exit
+- Immutable option parameters (strike, expiry, underlying, quote)
+
+Storage Structure:
+
+```rust
+sol_storage! {
+    #[entrypoint]
+    pub struct OptionToken {
+        // ERC-20 state (from OpenZeppelin Stylus)
+        Erc20 erc20;
+        Erc20Metadata metadata;
+
+        // Immutable option parameters
+        address underlying;
+        address quote;
+        uint8 underlying_decimals;
+        uint8 quote_decimals;
+        uint256 strike;          // 18 decimals normalized
+        uint256 expiry;
+        uint8 option_type;       // 0 = Call, 1 = Put
+
+        // Associated vault
+        address vault;
+    }
+}
+```
+
+**OptionToken Functions:**
+
+- Standard ERC-20: `transfer()`, `approve()`, `transferFrom()`, `balanceOf()`,
+  etc.
+- `exercise(quantity)` - Burn tokens, coordinate settlement with vault
+- `burnWithShares(quantity)` - Burn both option tokens and vault shares for
+  early exit
+- View functions for option parameters
+
+### Vault Contract (ERC-4626)
+
+Responsibilities:
+
+- Hold collateral for specific option series
+- Mint/burn vault shares (ERC-20) to writers
+- Execute proportional asset transfers on exercise
+- Enforce redemption constraints (after expiry, backing ratio)
+- Standard ERC-4626 interface for composability
+
+Storage Structure:
+
+```rust
+sol_storage! {
+    #[entrypoint]
+    pub struct OptionVault {
+        // ERC-4626 state (from OpenZeppelin Stylus)
+        Erc4626 vault;
+        Erc20 shares;
+        Erc20Metadata metadata;
+
+        // Option series this vault backs
+        uint256 token_id;
+        address options_contract;
+        uint256 expiry;
+
+        // Backing constraints
+        uint256 options_outstanding;  // Total option tokens issued
+        bool expired;                 // True after expiry timestamp
+    }
+}
+
+// Constructor implementation - hardcoded offset for security
+impl OptionVault {
+    pub fn constructor(&mut self, asset: Address) {
+        // Hardcoded decimals_offset=3 (1000x security multiplier)
+        // NOT a parameter - prevents bypass attacks
+        self.vault.constructor(asset, U8::from(3));
+    }
+}
+```
+
+**Vault Initialization:**
+
+```rust
+// In OptionFactory when deploying vault
+pub fn create_vault(asset: Address) -> Address {
+    // Deploy vault with inflation attack protection
+    // Vault internally hardcodes offset=3 (no parameter)
+    let vault = OptionVault::new(asset);
+    vault
+}
+```
+
+**Vault Functions:**
+
+- `constructor(asset)` - Initialize with hardcoded `decimals_offset=3` for
+  inflation protection
+- `deposit(assets, receiver)` - Writer deposits collateral, receives shares +
+  options
+- `redeem(shares, receiver, owner)` - Redeem shares after expiry
+- `exercise_withdraw(assets, recipient)` - Called by OptionsToken during
+  exercise
+- `burn_shares_with_options(shares, account)` - Early redemption path
+- Standard ERC-4626 view functions (totalAssets, convertToShares, etc.)
 
 #### Token Decimals Normalization
 
@@ -514,6 +810,12 @@ handled carefully:
 - **Impact:** Collateral shortfall, can't settle all exercises
 - **Protection:** Check balance before/after transfer, revert if mismatch
   detected (enforceable at contract level)
+- **When detected:**
+  - **Write time:** Fee-on-transfer collateral (underlying for calls, quote for
+    puts) causes write to revert, preventing option creation
+  - **Exercise time:** No detection needed - if underlying/quote becomes
+    fee-on-transfer after writing, holder simply receives less tokens on
+    exercise (better than not being able to exercise at all)
 
 **Rebasing Tokens:**
 
@@ -671,12 +973,32 @@ sol_storage! {
 
 Estimated costs at 0.1 gwei gas price, $0.05 per transaction average:
 
-- Write option: approx. 150k gas (approx. $0.0075)
-- Place limit order: approx. 100k gas (approx. $0.005)
-- Cancel order: approx. 50k gas (approx. $0.0025)
-- Market order (5 fills): approx. 250k gas (approx. $0.0125)
-- Exercise (immediate settlement): approx. 150k gas (approx. $0.0075)
-- Withdraw expired collateral: approx. 80k gas (approx. $0.004)
+**Option Series Deployment (First Time Only):**
+
+- Deploy OptionToken + Vault (first series): approx. 14M gas (approx. $0.70)
+  - WASM activation cost (one-time for implementation)
+- Deploy OptionToken + Vault (subsequent): approx. 100k gas (approx. $0.005)
+  - Clone pattern, no activation cost
+
+**Write/Exercise Operations:**
+
+- Write option (deposit to vault): approx. 180k gas (approx. $0.009)
+  - Vault deposit, share minting, option token minting
+  - First write includes contract deployment (~100k extra)
+- Exercise (burn + settle): approx. 150k gas (approx. $0.0075)
+  - ERC-20 burn, vault withdrawal, transfers
+- Redeem shares after expiry: approx. 100k gas (approx. $0.005)
+  - Standard ERC-4626 redemption
+- Burn shares + options (early): approx. 120k gas (approx. $0.006)
+  - Combined burn operation
+
+**Trading Operations:**
+
+- ERC-20 approve: approx. 50k gas (approx. $0.0025)
+- ERC-20 transfer: approx. 65k gas (approx. $0.00325)
+- Trade on Uniswap v2: approx. 100k gas (approx. $0.005)
+- CLOB limit order: approx. 100k gas (approx. $0.005)
+- CLOB market order (5 fills): approx. 250k gas (approx. $0.0125)
 
 Target: Keep all operations under 300k gas to stay economically viable even at
 higher gas prices.
@@ -702,9 +1024,11 @@ higher gas prices.
 
 **Integration Testing:**
 
-- Test OptionsToken <-> CLOB interactions
-- Test ERC-1155 transfers and approvals
-- Test settlement flows end-to-end
+- Test OptionFactory deployment flows
+- Test OptionToken <-> Vault interactions
+- Test ERC-20 transfers and approvals
+- Test settlement flows end-to-end (write to trade to exercise)
+- Test CLOB with standard ERC-20 tokens
 - Run locally or in CI (no testnet dependency)
 
 ### Attack Vectors & Mitigations

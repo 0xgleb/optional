@@ -6,7 +6,7 @@ use options::{Options, Token};
 use test_erc20::TestERC20;
 
 #[motsu::test]
-fn integration_write_call_option_happy_path(
+fn write_call_option_happy_path(
     contract: Contract<Options>,
     underlying_token: Contract<TestERC20>,
 ) {
@@ -40,7 +40,7 @@ fn integration_write_call_option_happy_path(
 }
 
 #[motsu::test]
-fn integration_write_same_option_twice_returns_same_token_id(
+fn write_same_option_twice_returns_same_token_id(
     contract: Contract<Options>,
     underlying_token: Contract<TestERC20>,
 ) {
@@ -79,7 +79,7 @@ fn integration_write_same_option_twice_returns_same_token_id(
 }
 
 #[motsu::test]
-fn integration_different_options_return_different_token_ids(
+fn different_options_return_different_token_ids(
     contract: Contract<Options>,
     underlying_token1: Contract<TestERC20>,
     underlying_token2: Contract<TestERC20>,

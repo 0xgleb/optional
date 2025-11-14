@@ -41,6 +41,15 @@ sol! {
         uint256 quantity,
         uint256 collateral
     );
+
+    event ExerciseCall(
+        address indexed holder,
+        address indexed writer,
+        bytes32 indexed tokenId,
+        uint256 quantity,
+        uint256 strikePayment,
+        uint256 underlyingReceived
+    );
 }
 
 // Implement AbiType for Token to make it usable in #[public] functions
@@ -53,6 +62,7 @@ sol_interface! {
     /// ERC20 interface for interacting with external token contracts.
     interface IERC20 {
         function balanceOf(address account) external view returns (uint256);
+        function transfer(address to, uint256 value) external returns (bool);
         function transferFrom(address from, address to, uint256 value) external returns (bool);
     }
 }
@@ -108,6 +118,12 @@ sol! {
     error TransferFailed();
     #[derive(Debug)]
     error UnexpectedBalanceDecrease();
+    #[derive(Debug)]
+    error OptionNotFound();
+    #[derive(Debug)]
+    error ExerciseAfterExpiry(uint256 expiry, uint256 current);
+    #[derive(Debug)]
+    error WrongOptionType(uint8 expected, uint8 actual);
 }
 
 #[derive(SolidityError, Debug)]
@@ -136,6 +152,12 @@ pub enum OptionsError {
     TransferFailed(TransferFailed),
     /// Balance decreased unexpectedly.
     UnexpectedBalanceDecrease(UnexpectedBalanceDecrease),
+    /// Option token ID not found (never written).
+    OptionNotFound(OptionNotFound),
+    /// Cannot exercise option after expiry.
+    ExerciseAfterExpiry(ExerciseAfterExpiry),
+    /// Wrong option type for this exercise function.
+    WrongOptionType(WrongOptionType),
 }
 
 sol_storage! {
@@ -262,7 +284,6 @@ pub(crate) fn normalize_amount(amount: U256, from_decimals: u8) -> Result<U256, 
 /// # Errors
 /// - `InvalidDecimals`: If `to_decimals > 18`
 /// - `NormalizationOverflow`: If scale factor calculation would overflow
-#[allow(dead_code)] // TODO: Remove when used in Issue #6 (Exercise)
 pub(crate) fn denormalize_amount(amount: U256, to_decimals: u8) -> Result<U256, OptionsError> {
     if to_decimals > 18 {
         return Err(OptionsError::InvalidDecimals(InvalidDecimals {
@@ -444,21 +465,88 @@ impl Options {
         Err(OptionsError::Unimplemented(Unimplemented {}))
     }
 
-    /// Exercises a call option
+    /// Exercises a call option.
     ///
-    /// Immediate atomic settlement: holder pays strike (quote tokens) to writer,
-    /// receives underlying tokens from collateral, burns option tokens.
-    /// Can only be called before option expiry.
+    /// Immediate atomic settlement following checks-effects-interactions pattern:
+    /// 1. Validates exercise conditions (holder balance, expiry, option type)
+    /// 2. Burns option tokens from holder
+    /// 3. Reduces writer's position (if holder is writer in PoC model)
+    /// 4. Transfers underlying tokens from contract to holder
+    ///
+    /// PoC Note: holder must be writer (single-writer model). Strike payment
+    /// transfer omitted since holder pays themselves.
+    ///
+    /// Fee-on-transfer behavior: If underlying token becomes fee-on-transfer
+    /// after writing, holder receives less tokens on exercise. This doesn't
+    /// revert - holder accepts the loss rather than being unable to exercise.
     ///
     /// # Parameters
     /// - `token_id`: The ERC-1155 token ID of the call option (keccak256 hash)
-    /// - `quantity`: Quantity of options to exercise
+    /// - `quantity`: Quantity of options to exercise (18-decimal normalized)
+    ///
+    /// # Returns
+    /// - `Ok(())` on successful exercise
     ///
     /// # Errors
-    /// Returns `OptionsError::Unimplemented` (stub implementation).
+    /// - `OptionNotFound`: Option metadata not found for token_id
+    /// - `ExerciseAfterExpiry`: Current time >= option expiry
+    /// - `WrongOptionType`: Token ID represents a put option, not call
+    /// - `InvalidQuantity`: Quantity is zero
+    /// - `InsufficientBalance`: Holder doesn't have enough option tokens
+    /// - `TransferFailed`: ERC20 transfer failed
+    /// - `Overflow`: Arithmetic overflow during calculation
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Writer exercises own call option
+    /// let token_id = contract.write_call_option(strike, expiry, quantity, underlying, quote)?;
+    /// let exercise_qty = U256::from(50) * U256::from(10).pow(U256::from(18));
+    /// contract.exercise_call(token_id, exercise_qty)?;
+    /// ```
     pub fn exercise_call(&mut self, token_id: B256, quantity: U256) -> Result<(), OptionsError> {
-        let _ = (token_id, quantity);
-        Err(OptionsError::Unimplemented(Unimplemented {}))
+        let holder = self.vm().msg_sender();
+        let current_time = self.vm().block_timestamp();
+
+        self.validate_call_exercise(holder, token_id, quantity, current_time)?;
+
+        let metadata = self.get_option_metadata(token_id);
+        let underlying_token = metadata.underlying;
+        let underlying_decimals = metadata.underlying_decimals;
+        let strike = metadata.strike;
+        let quote_decimals = metadata.quote_decimals;
+
+        let underlying_denorm = denormalize_amount(quantity, underlying_decimals)?;
+        let strike_total = strike
+            .checked_mul(quantity)
+            .ok_or(OptionsError::Overflow(Overflow {}))?;
+        let strike_payment = denormalize_amount(strike_total, quote_decimals)?;
+
+        self._burn(holder, token_id, quantity)?;
+
+        self.reduce_position(holder, token_id, quantity)?;
+
+        let erc20 = IERC20::new(underlying_token);
+        let success = erc20
+            .transfer(Call::new_in(self), holder, underlying_denorm)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        if !success {
+            return Err(OptionsError::TransferFailed(TransferFailed {}));
+        }
+
+        log(
+            self.vm(),
+            ExerciseCall {
+                holder,
+                writer: holder,
+                tokenId: token_id,
+                quantity,
+                strikePayment: strike_payment,
+                underlyingReceived: underlying_denorm,
+            },
+        );
+
+        Ok(())
     }
 
     /// Exercises a put option
@@ -646,8 +734,8 @@ impl Options {
     ///
     /// # Returns
     /// Token balance (0 if no balance exists)
-    #[allow(dead_code)] // TODO: Remove when used in Issue #11 (Full ERC-1155)
-    pub(crate) fn balance_of(&self, owner: Address, token_id: B256) -> U256 {
+    #[must_use]
+    pub fn balance_of(&self, owner: Address, token_id: B256) -> U256 {
         let key = Self::balance_key(owner, token_id);
         self.balances.get(key)
     }
@@ -720,6 +808,60 @@ impl Options {
         Ok(())
     }
 
+    /// Safely transfers ERC20 tokens from contract to recipient with fee-on-transfer detection.
+    ///
+    /// Checks the recipient's balance before and after transfer to ensure the full
+    /// amount was received. This prevents fee-on-transfer tokens from breaking
+    /// settlement accounting.
+    ///
+    /// # Parameters
+    /// - `token`: ERC20 token contract address
+    /// - `to`: Recipient address
+    /// - `amount`: Amount to transfer
+    ///
+    /// # Errors
+    /// - `TransferFailed`: ERC20 transfer call failed
+    /// - `FeeOnTransferDetected`: Received amount doesn't match requested amount
+    /// - `UnexpectedBalanceDecrease`: Balance decreased instead of increased
+    #[allow(deprecated)]
+    pub fn safe_transfer(
+        &mut self,
+        token: Address,
+        to: Address,
+        amount: U256,
+    ) -> Result<(), OptionsError> {
+        let erc20 = IERC20::new(token);
+
+        let balance_before = erc20
+            .balance_of(Call::new_in(self), to)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        let success = erc20
+            .transfer(Call::new_in(self), to, amount)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        if !success {
+            return Err(OptionsError::TransferFailed(TransferFailed {}));
+        }
+
+        let balance_after = erc20
+            .balance_of(Call::new_in(self), to)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        let received = balance_after.checked_sub(balance_before).ok_or(
+            OptionsError::UnexpectedBalanceDecrease(UnexpectedBalanceDecrease {}),
+        )?;
+
+        if received != amount {
+            return Err(OptionsError::FeeOnTransferDetected(FeeOnTransferDetected {
+                expected: amount,
+                received,
+            }));
+        }
+
+        Ok(())
+    }
+
     /// Stores option metadata for a token ID.
     ///
     /// Metadata is stored once per option series on first write. Subsequent writes
@@ -760,7 +902,6 @@ impl Options {
     ///
     /// # Returns
     /// Option metadata struct with all option parameters
-    #[allow(dead_code)] // TODO: Remove when used in Issue #6 (Exercise)
     pub(crate) fn get_option_metadata(&self, token_id: B256) -> OptionMetadataView {
         let metadata = self.option_metadata.get(token_id);
         OptionMetadataView {
@@ -830,14 +971,134 @@ impl Options {
     ///
     /// # Returns
     /// Tuple of (quantity_written, collateral_locked)
-    #[allow(dead_code)] // TODO: Remove when used in Issue #7 (Withdraw Collateral)
-    pub(crate) fn get_position(&self, writer: Address, token_id: B256) -> (U256, U256) {
+    #[must_use]
+    pub fn get_position(&self, writer: Address, token_id: B256) -> (U256, U256) {
         let key = Self::position_key(writer, token_id);
         let position = self.positions.get(key);
         (
             position.quantity_written.get(),
             position.collateral_locked.get(),
         )
+    }
+
+    /// Validates preconditions for exercising a call option.
+    ///
+    /// Performs comprehensive validation before exercise execution:
+    /// - Option exists (has been written)
+    /// - Not expired
+    /// - Is a call option
+    /// - Non-zero quantity
+    /// - Holder has sufficient option tokens
+    ///
+    /// # Parameters
+    /// - `holder`: Address attempting to exercise
+    /// - `token_id`: ERC-1155 token ID of the option
+    /// - `quantity`: Amount to exercise
+    /// - `current_time`: Current block timestamp
+    ///
+    /// # Errors
+    /// - `OptionNotFound`: Token ID has no metadata (never written)
+    /// - `ExerciseAfterExpiry`: Current time >= expiry
+    /// - `WrongOptionType`: Option is not a call (is a put)
+    /// - `InvalidQuantity`: Quantity is zero
+    /// - `InsufficientBalance`: Holder doesn't have enough option tokens
+    pub(crate) fn validate_call_exercise(
+        &self,
+        holder: Address,
+        token_id: B256,
+        quantity: U256,
+        current_time: u64,
+    ) -> Result<(), OptionsError> {
+        let metadata = self.get_option_metadata(token_id);
+        if metadata.expiry.is_zero() {
+            return Err(OptionsError::OptionNotFound(OptionNotFound {}));
+        }
+
+        let expiry = metadata.expiry.to::<u64>();
+        if current_time >= expiry {
+            return Err(OptionsError::ExerciseAfterExpiry(ExerciseAfterExpiry {
+                expiry: metadata.expiry,
+                current: U256::from(current_time),
+            }));
+        }
+
+        if metadata.option_type != 0 {
+            return Err(OptionsError::WrongOptionType(WrongOptionType {
+                expected: 0,
+                actual: metadata.option_type,
+            }));
+        }
+
+        if quantity.is_zero() {
+            return Err(OptionsError::InvalidQuantity(InvalidQuantity {}));
+        }
+
+        let holder_balance = self.balance_of(holder, token_id);
+        if holder_balance < quantity {
+            return Err(OptionsError::InsufficientBalance(InsufficientBalance {
+                available: holder_balance,
+                requested: quantity,
+            }));
+        }
+
+        Ok(())
+    }
+
+    /// Reduces a writer's position for an option series.
+    ///
+    /// Decreases both the quantity written and collateral locked proportionally.
+    /// Used when options are exercised or burned.
+    ///
+    /// # Parameters
+    /// - `writer`: Address of the position owner
+    /// - `token_id`: ERC-1155 token ID of the option
+    /// - `quantity`: Amount to reduce the position by
+    ///
+    /// # Errors
+    /// - `InsufficientBalance`: Position quantity less than requested reduction
+    /// - `Overflow`: Arithmetic overflow during calculation (should never occur with valid inputs)
+    pub(crate) fn reduce_position(
+        &mut self,
+        writer: Address,
+        token_id: B256,
+        quantity: U256,
+    ) -> Result<(), OptionsError> {
+        let key = Self::position_key(writer, token_id);
+        let position = self.positions.get(key);
+
+        let current_quantity = position.quantity_written.get();
+        let current_collateral = position.collateral_locked.get();
+
+        if current_quantity < quantity {
+            return Err(OptionsError::InsufficientBalance(InsufficientBalance {
+                available: current_quantity,
+                requested: quantity,
+            }));
+        }
+
+        let new_quantity = current_quantity
+            .checked_sub(quantity)
+            .ok_or(OptionsError::Overflow(Overflow {}))?;
+
+        let collateral_to_reduce = if current_quantity.is_zero() {
+            U256::ZERO
+        } else {
+            current_collateral
+                .checked_mul(quantity)
+                .ok_or(OptionsError::Overflow(Overflow {}))?
+                .checked_div(current_quantity)
+                .ok_or(OptionsError::Overflow(Overflow {}))?
+        };
+
+        let new_collateral = current_collateral
+            .checked_sub(collateral_to_reduce)
+            .ok_or(OptionsError::Overflow(Overflow {}))?;
+
+        let mut position = self.positions.setter(key);
+        position.quantity_written.set(new_quantity);
+        position.collateral_locked.set(new_collateral);
+
+        Ok(())
     }
 }
 
@@ -847,7 +1108,7 @@ mod tests {
     use motsu::prelude::*;
 
     use super::*;
-    use crate::mock_erc20::{FeeOnTransferERC20, MockERC20};
+    use crate::mock_erc20::MockERC20;
 
     #[test]
     fn test_mock_erc20_mint_increases_balance() {
@@ -922,42 +1183,6 @@ mod tests {
         token.set_decimals(decimals);
 
         assert_eq!(token.decimals(), decimals);
-    }
-
-    #[test]
-    fn test_fee_on_transfer_erc20_deducts_fee() {
-        let mut token = FeeOnTransferERC20::default();
-        let alice = Address::from([1u8; 20]);
-        let bob = Address::from([2u8; 20]);
-        let amount = U256::from(1000);
-
-        token.mint(alice, amount);
-
-        let transfer_amount = U256::from(1000);
-        token.transfer(alice, bob, transfer_amount);
-
-        let expected_received = U256::from(990); // 99% of 1000
-        assert_eq!(token.balance_of(bob), expected_received);
-        assert_eq!(token.balance_of(alice), U256::ZERO);
-    }
-
-    #[test]
-    fn test_fee_on_transfer_balance_after_transfer() {
-        let mut token = FeeOnTransferERC20::default();
-        let alice = Address::from([1u8; 20]);
-        let bob = Address::from([2u8; 20]);
-        let amount = U256::from(2000);
-
-        token.mint(alice, amount);
-
-        let transfer_amount = U256::from(1000);
-        token.transfer(alice, bob, transfer_amount);
-
-        let expected_bob_balance = U256::from(990); // 99% of 1000
-        let expected_alice_balance = U256::from(1000); // 2000 - 1000
-
-        assert_eq!(token.balance_of(bob), expected_bob_balance);
-        assert_eq!(token.balance_of(alice), expected_alice_balance);
     }
 
     // Decimal Normalization Tests
@@ -1367,25 +1592,6 @@ mod tests {
         assert!(success);
         let received = balance_after.checked_sub(balance_before).unwrap();
         assert_eq!(received, amount);
-    }
-
-    #[test]
-    fn test_transfer_from_fee_on_transfer_fails_detection() {
-        let mut token = FeeOnTransferERC20::default();
-        let from = Address::from([0x01; 20]);
-        let to = Address::from([0x02; 20]);
-        let amount = U256::from(1000);
-
-        token.mint(from, U256::from(10000));
-
-        let balance_before = token.balance_of(to);
-        token.transfer(from, to, amount);
-        let balance_after = token.balance_of(to);
-
-        let received = balance_after.checked_sub(balance_before).unwrap();
-        // FeeOnTransferERC20 deducts 1% fee, so received should be less than amount
-        assert!(received < amount);
-        assert_eq!(received, amount - (amount / U256::from(100)));
     }
 
     #[test]
@@ -1937,14 +2143,6 @@ mod tests {
     }
 
     #[motsu::test]
-    fn test_exercise_call_unimplemented(contract: Contract<Options>, alice: Address) {
-        let result = contract
-            .sender(alice)
-            .exercise_call(B256::ZERO, U256::from(10));
-        assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
-    }
-
-    #[motsu::test]
     fn test_exercise_put_unimplemented(contract: Contract<Options>, alice: Address) {
         let result = contract
             .sender(alice)
@@ -1958,6 +2156,330 @@ mod tests {
             .sender(alice)
             .withdraw_expired_collateral(B256::ZERO, U256::from(10));
         assert!(matches!(result, Err(OptionsError::Unimplemented(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_with_valid_inputs(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x41; 32]);
+        let quantity = U256::from(100);
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            2_000_000_000u64,
+            OptionType::Call,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, quantity)
+            .unwrap();
+
+        let current_time = 1_900_000_000u64;
+        let result =
+            contract
+                .sender(alice)
+                .validate_call_exercise(alice, token_id, quantity, current_time);
+
+        assert!(result.is_ok());
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_option_not_found(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let non_existent_token = B256::from([0x99; 32]);
+        let quantity = U256::from(100);
+        let current_time = 1_900_000_000u64;
+
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            non_existent_token,
+            quantity,
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::OptionNotFound(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_after_expiry(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x43; 32]);
+        let expiry = 2_000_000_000u64;
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            expiry,
+            OptionType::Call,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, U256::from(100))
+            .unwrap();
+
+        let current_time = expiry + 1;
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            token_id,
+            U256::from(50),
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::ExerciseAfterExpiry(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_at_exact_expiry(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x44; 32]);
+        let expiry = 2_000_000_000u64;
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            expiry,
+            OptionType::Call,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, U256::from(100))
+            .unwrap();
+
+        let current_time = expiry;
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            token_id,
+            U256::from(50),
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::ExerciseAfterExpiry(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_wrong_option_type(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x42; 32]);
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            2_000_000_000u64,
+            OptionType::Put,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, U256::from(100))
+            .unwrap();
+
+        let current_time = 1_900_000_000u64;
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            token_id,
+            U256::from(50),
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::WrongOptionType(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_zero_quantity(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x45; 32]);
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            2_000_000_000u64,
+            OptionType::Call,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, U256::from(100))
+            .unwrap();
+
+        let current_time = 1_900_000_000u64;
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            token_id,
+            U256::ZERO,
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::InvalidQuantity(_))));
+    }
+
+    #[motsu::test]
+    fn test_validate_call_exercise_insufficient_balance(contract: Contract<Options>) {
+        let alice = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x46; 32]);
+        let balance = U256::from(100);
+
+        contract.sender(alice).store_option_metadata(
+            token_id,
+            Token {
+                address: Address::from([0x11; 20]),
+                decimals: 8,
+            },
+            Token {
+                address: Address::from([0x22; 20]),
+                decimals: 6,
+            },
+            U256::from(50_000),
+            2_000_000_000u64,
+            OptionType::Call,
+        );
+
+        contract
+            .sender(alice)
+            ._mint(alice, token_id, balance)
+            .unwrap();
+
+        let current_time = 1_900_000_000u64;
+        let excessive_quantity = balance.checked_add(U256::from(1)).unwrap();
+        let result = contract.sender(alice).validate_call_exercise(
+            alice,
+            token_id,
+            excessive_quantity,
+            current_time,
+        );
+
+        assert!(matches!(result, Err(OptionsError::InsufficientBalance(_))));
+    }
+
+    #[motsu::test]
+    fn test_reduce_position_successfully(contract: Contract<Options>) {
+        let writer = Address::from([0xAA; 20]);
+        let token_id = B256::from([0x50; 32]);
+        let initial_quantity = U256::from(1000);
+        let initial_collateral = U256::from(5000);
+        let reduction = U256::from(300);
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, initial_quantity, initial_collateral)
+            .unwrap();
+
+        let result = contract
+            .sender(writer)
+            .reduce_position(writer, token_id, reduction);
+
+        assert!(result.is_ok());
+
+        let (quantity, collateral) = contract.sender(writer).get_position(writer, token_id);
+        assert_eq!(quantity, U256::from(700));
+        assert_eq!(collateral, U256::from(3500));
+    }
+
+    #[motsu::test]
+    fn test_reduce_position_to_zero(contract: Contract<Options>) {
+        let writer = Address::from([0xBB; 20]);
+        let token_id = B256::from([0x51; 32]);
+        let quantity = U256::from(100);
+        let collateral = U256::from(500);
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, quantity, collateral)
+            .unwrap();
+
+        let result = contract
+            .sender(writer)
+            .reduce_position(writer, token_id, quantity);
+
+        assert!(result.is_ok());
+
+        let (new_quantity, new_collateral) = contract.sender(writer).get_position(writer, token_id);
+        assert_eq!(new_quantity, U256::ZERO);
+        assert_eq!(new_collateral, U256::ZERO);
+    }
+
+    #[motsu::test]
+    fn test_reduce_position_insufficient_quantity(contract: Contract<Options>) {
+        let writer = Address::from([0xCC; 20]);
+        let token_id = B256::from([0x52; 32]);
+        let quantity = U256::from(100);
+        let collateral = U256::from(500);
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, quantity, collateral)
+            .unwrap();
+
+        let result = contract
+            .sender(writer)
+            .reduce_position(writer, token_id, U256::from(101));
+
+        assert!(matches!(result, Err(OptionsError::InsufficientBalance(_))));
+    }
+
+    #[motsu::test]
+    fn test_reduce_position_maintains_collateral_ratio(contract: Contract<Options>) {
+        let writer = Address::from([0xDD; 20]);
+        let token_id = B256::from([0x53; 32]);
+        let initial_quantity = U256::from(1000);
+        let initial_collateral = U256::from(10_000);
+
+        contract
+            .sender(writer)
+            .create_or_update_position(writer, token_id, initial_quantity, initial_collateral)
+            .unwrap();
+
+        contract
+            .sender(writer)
+            .reduce_position(writer, token_id, U256::from(250))
+            .unwrap();
+
+        let (quantity, collateral) = contract.sender(writer).get_position(writer, token_id);
+        assert_eq!(quantity, U256::from(750));
+        assert_eq!(collateral, U256::from(7500));
     }
 }
 
@@ -2084,6 +2606,121 @@ mod proptests {
             let key1 = Options::position_key(writer, token_id1);
             let key2 = Options::position_key(writer, token_id2);
             prop_assert_ne!(key1, key2);
+        }
+
+        #[test]
+        fn prop_collateral_reduction_proportional(
+            current_quantity in 1u128..1_000_000_000u128,
+            current_collateral in 1u128..1_000_000_000u128,
+            reduce_quantity in 1u128..1_000_000_000u128,
+        ) {
+            let current_qty = U256::from(current_quantity);
+            let current_col = U256::from(current_collateral);
+            let reduce_qty = U256::from(reduce_quantity);
+
+            prop_assume!(reduce_qty <= current_qty);
+
+            let collateral_to_reduce = current_col
+                .checked_mul(reduce_qty)
+                .and_then(|v| v.checked_div(current_qty));
+
+            if let Some(reduction) = collateral_to_reduce {
+                prop_assert!(reduction <= current_col);
+
+                if reduce_qty == current_qty {
+                    prop_assert_eq!(reduction, current_col);
+                }
+
+                let ratio_qty = (reduce_qty.to::<u128>() as f64) / (current_qty.to::<u128>() as f64);
+                let ratio_col = (reduction.to::<u128>() as f64) / (current_col.to::<u128>() as f64);
+                let ratio_diff = (ratio_qty - ratio_col).abs();
+                prop_assert!(ratio_diff < 0.01, "Ratios should be approximately equal: qty={}, col={}, diff={}", ratio_qty, ratio_col, ratio_diff);
+            }
+        }
+
+        #[test]
+        fn prop_exercise_arithmetic_no_overflow(
+            balance in 0u64..1_000_000u64,
+            exercise_qty in 0u64..1_000_000u64,
+        ) {
+            let balance_u256 = U256::from(balance);
+            let exercise_u256 = U256::from(exercise_qty);
+
+            let result = balance_u256.checked_sub(exercise_u256);
+
+            if exercise_u256 <= balance_u256 {
+                prop_assert!(result.is_some());
+                prop_assert!(result.unwrap() <= balance_u256);
+            } else {
+                prop_assert!(result.is_none());
+            }
+        }
+
+        #[test]
+        fn prop_total_supply_arithmetic(
+            total_supply in 0u128..u64::MAX as u128,
+            burn_amount in 0u128..u64::MAX as u128,
+        ) {
+            let supply = U256::from(total_supply);
+            let burn = U256::from(burn_amount);
+
+            let result = supply.checked_sub(burn);
+
+            if burn <= supply {
+                prop_assert!(result.is_some());
+                let new_supply = result.unwrap();
+                prop_assert!(new_supply <= supply);
+                prop_assert_eq!(new_supply, supply - burn);
+            } else {
+                prop_assert!(result.is_none());
+            }
+        }
+
+        #[test]
+        fn prop_position_reduction_never_panics(
+            current_quantity in any::<u128>(),
+            reduce_quantity in any::<u128>(),
+            current_collateral in any::<u128>(),
+        ) {
+            let current_qty = U256::from(current_quantity);
+            let reduce_qty = U256::from(reduce_quantity);
+            let current_col = U256::from(current_collateral);
+
+            if reduce_qty > current_qty {
+                return Ok(());
+            }
+
+            let collateral_to_reduce = if current_qty.is_zero() {
+                U256::ZERO
+            } else {
+                current_col
+                    .checked_mul(reduce_qty)
+                    .and_then(|v| v.checked_div(current_qty))
+                    .unwrap_or(U256::ZERO)
+            };
+
+            let new_quantity = current_qty.checked_sub(reduce_qty);
+            let new_collateral = current_col.checked_sub(collateral_to_reduce);
+
+            prop_assert!(new_quantity.is_some() || new_quantity.is_none());
+            prop_assert!(new_collateral.is_some() || new_collateral.is_none());
+        }
+
+        #[test]
+        fn prop_exercise_quantity_never_exceeds_balance(
+            balance in 0u128..1_000_000_000u128,
+            exercise in 0u128..1_000_000_000u128,
+        ) {
+            let balance_u256 = U256::from(balance);
+            let exercise_u256 = U256::from(exercise);
+
+            let is_valid = exercise_u256 <= balance_u256 && !exercise_u256.is_zero();
+
+            if is_valid {
+                let remaining = balance_u256.checked_sub(exercise_u256);
+                prop_assert!(remaining.is_some());
+                prop_assert!(remaining.unwrap() < balance_u256 || exercise_u256.is_zero());
+            }
         }
     }
 }

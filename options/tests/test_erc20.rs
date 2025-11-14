@@ -19,6 +19,21 @@ impl TestERC20 {
         self.balances.get(account)
     }
 
+    pub fn transfer(&mut self, to: Address, amount: U256) -> bool {
+        let from = self.vm().msg_sender();
+        let sender_balance = self.balances.get(from);
+
+        if sender_balance < amount {
+            return false;
+        }
+
+        self.balances.insert(from, sender_balance - amount);
+        let recipient_balance = self.balances.get(to);
+        self.balances.insert(to, recipient_balance + amount);
+
+        true
+    }
+
     pub fn transfer_from(&mut self, from: Address, to: Address, amount: U256) -> bool {
         let spender = self.vm().msg_sender();
         let allowance = self.allowances.getter(from).get(spender);
