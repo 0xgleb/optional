@@ -331,30 +331,30 @@ mod tests {
     #[motsu::test]
     fn deposit_returns_unimplemented(contract: OptionVault) {
         let result = contract.deposit(U256::from(100), Address::ZERO);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(_)));
     }
 
     #[motsu::test]
     fn exercise_withdraw_returns_unimplemented(contract: OptionVault) {
         let result = contract.exercise_withdraw(U256::from(100), Address::ZERO);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(_)));
     }
 
     #[motsu::test]
     fn claim_returns_unimplemented(contract: OptionVault) {
         let result = contract.claim();
-        assert!(result.is_err());
+        assert!(matches!(result, Err(_)));
     }
 
     #[motsu::test]
     fn burn_shares_with_options_returns_unimplemented(contract: OptionVault) {
         let result = contract.burn_shares_with_options(U256::from(100), Address::ZERO);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(_)));
     }
 
     #[motsu::test]
     fn mark_expired_returns_unimplemented(contract: OptionVault) {
         let result = contract.mark_expired();
-        assert!(result.is_err());
+        assert!(matches!(result, Err(_)));
     }
 }
