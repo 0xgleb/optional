@@ -35,7 +35,7 @@ fn writer_exercises_own_options_successfully(
         .write_call_option(strike, expiry, write_quantity, underlying, quote)
         .unwrap();
 
-    let exercise_quantity = U256::from(50_000_000);
+    let exercise_quantity = U256::from(50_000_000) * U256::from(10).pow(U256::from(10));
     let result = contract
         .sender(writer)
         .exercise_call(token_id, exercise_quantity);

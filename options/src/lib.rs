@@ -476,6 +476,10 @@ impl Options {
     /// PoC Note: holder must be writer (single-writer model). Strike payment
     /// transfer omitted since holder pays themselves.
     ///
+    /// Fee-on-transfer behavior: If underlying token becomes fee-on-transfer
+    /// after writing, holder receives less tokens on exercise. This doesn't
+    /// revert - holder accepts the loss rather than being unable to exercise.
+    ///
     /// # Parameters
     /// - `token_id`: The ERC-1155 token ID of the call option (keccak256 hash)
     /// - `quantity`: Quantity of options to exercise (18-decimal normalized)
@@ -519,9 +523,16 @@ impl Options {
 
         self._burn(holder, token_id, quantity)?;
 
-        let _ = self.reduce_position(holder, token_id, quantity);
+        self.reduce_position(holder, token_id, quantity)?;
 
-        self.safe_transfer(underlying_token, holder, underlying_denorm)?;
+        let erc20 = IERC20::new(underlying_token);
+        let success = erc20
+            .transfer(Call::new_in(self), holder, underlying_denorm)
+            .map_err(|_| OptionsError::TransferFailed(TransferFailed {}))?;
+
+        if !success {
+            return Err(OptionsError::TransferFailed(TransferFailed {}));
+        }
 
         log(
             self.vm(),
