@@ -2610,6 +2610,7 @@ mod proptests {
         }
 
         #[test]
+        #[allow(clippy::cast_precision_loss)]
         fn prop_collateral_reduction_proportional(
             current_quantity in 1u128..1_000_000_000u128,
             current_collateral in 1u128..1_000_000_000u128,

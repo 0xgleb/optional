@@ -320,7 +320,7 @@ fn exercising_more_than_balance_fails(
         .sender(writer)
         .exercise_call(token_id, excessive_quantity);
 
-    assert!(matches!(result, Err(_)));
+    assert!(result.is_err());
 }
 
 #[motsu::test]
@@ -398,5 +398,5 @@ fn exercise_with_wrong_token_id_fails(
         .sender(writer)
         .exercise_call(wrong_token_id, normalized_quantity);
 
-    assert!(matches!(result, Err(_)));
+    assert!(result.is_err());
 }
